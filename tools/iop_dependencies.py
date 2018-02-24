@@ -66,6 +66,7 @@ def add_edges(gr):
   gr.add_edge(('demosaic', 'highlights'))
   gr.add_edge(('demosaic', 'hotpixels'))
   gr.add_edge(('demosaic', 'rawdenoise'))
+  gr.add_edge(('demosaic', 'rawdenoise_nlmeans'))
   gr.add_edge(('demosaic', 'cacorrect'))
 
   # highlights come directly after whitebalance
@@ -74,6 +75,7 @@ def add_edges(gr):
   # cacorrect works better on undenoised data:
   gr.add_edge(('hotpixels', 'cacorrect'))
   gr.add_edge(('rawdenoise', 'cacorrect'))
+  gr.add_edge(('rawdenoise_nlmeans', 'cacorrect'))
 
   # all these need white balanced and clipped input:
   gr.add_edge(('rawdenoise', 'highlights'))
@@ -532,6 +534,7 @@ gr.add_nodes([
 'rawoverexposed',
 'profile_gamma',
 'rawdenoise',
+'rawdenoise_nlmeans',
 'relight',
 'scalepixels',
 'rotatepixels',
