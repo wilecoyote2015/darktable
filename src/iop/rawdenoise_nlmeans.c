@@ -84,18 +84,174 @@ void connect_key_accels(dt_iop_module_t *self)
   dt_accel_connect_slider_iop(self, "noise threshold", GTK_WIDGET(g->threshold));
 }
 
+typedef union floatint_t
+{
+  float f;
+  uint32_t i;
+} floatint_t;
+
+
 #define BIT16 65536.0
+
+
+static inline float fast_mexp2f(const float x)
+{
+  const float i1 = (float)0x3f800000u; // 2^0
+  const float i2 = (float)0x3f000000u; // 2^-1
+  const float k0 = i1 + x * (i2 - i1);
+  floatint_t k;
+  k.i = k0 >= (float)0x800000u ? k0 : 0;
+  return k.f;
+}
+
+static float calculate_weight(const float value, const float h)
+{
+  const float exponent = value / h*h;
+  return fast_mexp2f(exponent);
+}
+
+void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
+                   void *const ovoid, const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
+{
+  // this is called for preview and full pipe separately, each with its own pixelpipe piece.
+  // get our data struct:
+  const dt_iop_rawdenoise_nlmeans_params_t *const d = (dt_iop_rawdenoise_nlmeans_params_t *)piece->data;
+
+
+
+//  // adjust to zoom size:
+//  const int P = ceilf(d->radius * fmin(roi_in->scale, 2.0f) / fmax(piece->iscale, 1.0f)); // pixel filter size
+//  const int K = ceilf(21 * fmin(roi_in->scale, 2.0f) / fmax(piece->iscale, 1.0f));         // nbhood
+//  const float sharpness = 3000.0f / (1.0f + d->strength);
+//  if(P < 1)
+//  {
+//    // nothing to do from this distance:
+//    memcpy(ovoid, ivoid, (size_t)sizeof(float) * 4 * roi_out->width * roi_out->height);
+//    return;
+//  }
+
+  // patch and neighorhood size
+  // todo: get from data
+  const int size_patch = 7;
+  const int size_neighborhood = 10;
+  const float h = 1.0f;  // todo: probably wrong value
+
+
+  // get norm to norm data to 1
+  // todo: this will not be necessary with variance stabilization
+  float max_value = 1.0f; // todo: this is most probably not correct!
+  const float norm = 1.0f / max_value;
+
+  float *Sa = dt_alloc_align(64, (size_t)sizeof(float) * roi_out->width * dt_get_num_threads());
+  // we want to sum up weights in col[3], so need to init to 0:
+  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height);  // todo: originally was *4, but we dont have multiple colors, so i guess it must be omitted
+
+  // for each shift vector
+  // todo: adjust shift and max value to raw pattern size
+  for(int kj = -size_neighborhood; kj <= size_neighborhood; kj++)
+  {
+    for(int ki = -size_neighborhood; ki <= size_neighborhood; ki++)
+    {
+      int inited_slide = 0;
+// don't construct summed area tables but use sliding window! (applies to cpu version res < 1k only, or else
+// we will add up errors)
+// do this in parallel with a little threading overhead. could parallelize the outer loops with a bit more
+// memory
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(kj, ki, Sa)
+#endif
+      for(int j = 0; j < roi_out->height; j++)
+      {
+        // if shifted position is out of image range, skip
+        if(j + kj < 0 || j + kj >= roi_out->height) continue;
+
+        float *S = Sa + (size_t)dt_get_thread_num() * roi_out->width;
+
+        // pointer to input and output pixel column
+        const float *ins = ((float *)ivoid) + ((size_t)roi_in->width * (j + kj) + ki);
+        float *out = ((float *)ovoid) + (size_t)roi_out->width * j;
+
+        const int Pm = MIN(MIN(size_patch, j + kj), j);
+        const int PM = MIN(MIN(size_patch, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
+        // first line of every thread
+        // TODO: also every once in a while to assert numerical precision!
+        if(!inited_slide)
+        {
+          // sum up a line
+          memset(S, 0x0, sizeof(float) * roi_out->width);
+          for(int jj = -Pm; jj <= PM; jj++)
+          {
+            int i = MAX(0, -ki);
+            float *s = S + i;
+            const float *inp = ((float *)ivoid) + i + (size_t)roi_in->width * (j + jj);
+            const float *inps = ((float *)ivoid) + i + ((size_t)roi_in->width * (j + jj + kj) + ki);
+            const int last = roi_out->width + MIN(0, -ki);
+            for(; i < last; i++, inp ++, inps++, s++)
+            {
+              // todo: inp and inps were array elements with indices over color channels. now are simpy value references
+              *s += (*inp - *inps) * (*inp - *inps) * norm;
+            }
+          }
+          // only reuse this if we had a full stripe
+          if(Pm == size_patch && PM == size_patch) inited_slide = 1;
+        }
+
+        // sliding window for this line:
+        float *s = S;
+        float slide = 0.0f;
+        // sum up the first -P..P
+        for(int i = 0; i < 2 * size_patch + 1; i++) slide += s[i];
+        for(int i = 0; i < roi_out->width; i++, s++, ins++, out++)
+        {
+          if(i - size_patch > 0 && i + size_patch < roi_out->width) slide += s[size_patch] - s[-size_patch - 1];
+          if(i + ki >= 0 && i + ki < roi_out->width)
+          {
+            // todo: what is iv?
+            const float iv = *ins;
+
+            // calculate the value of nl mean using weight
+            *out += iv * calculate_weight(slide, h);
+          }
+        }
+        if(inited_slide && j + size_patch + 1 + MAX(0, kj) < roi_out->height)
+        {
+          // sliding window in j direction:
+          int i = MAX(0, -ki);
+          s = S + i;
+          const float *inp = ((float *)ivoid) + i + (size_t)roi_in->width * (j + size_patch + 1);
+          const float *inps = ((float *)ivoid) + i + ((size_t)roi_in->width * (j + size_patch + 1 + kj) + ki);
+          const float *inm = ((float *)ivoid) + i + (size_t)roi_in->width * (j - size_patch);
+          const float *inms = ((float *)ivoid) + i + ((size_t)roi_in->width * (j - size_patch + kj) + ki);
+          const int last = roi_out->width + MIN(0, -ki);
+          for(; i < last; i++, inp++, inps++, inm++, inms++, s++)
+          {
+            float stmp = s[0];
+            stmp += ((*inp - *inps) * (*inp - *inps) - (*inm - *inms) * (*inm - *inms)) * norm;
+            s[0] = stmp;
+          }
+        }
+        else
+          inited_slide = 0;
+      }
+    }
+  }
+
+  // todo: normalization for weights?
+
+  // free shared tmp memory:
+  dt_free_align(Sa);
+
+  if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
+}
 
 void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
              void *const ovoid, const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
   dt_iop_rawdenoise_nlmeans_data_t *d = (dt_iop_rawdenoise_nlmeans_data_t *)piece->data;
 
-  const int width = roi_in->width;
-  const int height = roi_in->height;
-
-  // todo: insert nl means code here
+  apply_nlmeans(self, piece, ivoid, ovoid, roi_in, roi_out);
 }
+
 
 void reload_defaults(dt_iop_module_t *module)
 {
