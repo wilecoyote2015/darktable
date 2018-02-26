@@ -140,17 +140,17 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   // get norm to norm data to 1
   // todo: this will not be necessary with variance stabilization
   float max_value = 1.0f; // todo: this is most probably not correct!
-  const float norm = 1.0f / max_value;
+  const float norm2[2] = {1.0f / max_value, 1.0f};
+
 
   float *Sa = dt_alloc_align(64, (size_t)sizeof(float) * roi_out->width * dt_get_num_threads());
   // we want to sum up weights in col[3], so need to init to 0:
-  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height);  // todo: originally was *4, but we dont have multiple colors, so i guess it must be omitted
+  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * 4);
 
   // for each shift vector
-  // todo: adjust shift and max value to raw pattern size
-  for(int kj = -size_neighborhood; kj <= size_neighborhood; kj++)
+  for(int kj = -K; kj <= K; kj++)
   {
-    for(int ki = -size_neighborhood; ki <= size_neighborhood; ki++)
+    for(int ki = -K; ki <= K; ki++)
     {
       int inited_slide = 0;
 // don't construct summed area tables but use sliding window! (applies to cpu version res < 1k only, or else
@@ -162,17 +162,13 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 #endif
       for(int j = 0; j < roi_out->height; j++)
       {
-        // if shifted position is out of image range, skip
         if(j + kj < 0 || j + kj >= roi_out->height) continue;
-
         float *S = Sa + (size_t)dt_get_thread_num() * roi_out->width;
+        const float *ins = ((float *)ivoid) + 4 * ((size_t)roi_in->width * (j + kj) + ki);
+        float *out = ((float *)ovoid) + 4 * (size_t)roi_out->width * j;
 
-        // pointer to input and output pixel column
-        const float *ins = ((float *)ivoid) + ((size_t)roi_in->width * (j + kj) + ki);
-        float *out = ((float *)ovoid) + (size_t)roi_out->width * j;
-
-        const int Pm = MIN(MIN(size_patch, j + kj), j);
-        const int PM = MIN(MIN(size_patch, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
+        const int Pm = MIN(MIN(P, j + kj), j);
+        const int PM = MIN(MIN(P, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
         // first line of every thread
         // TODO: also every once in a while to assert numerical precision!
         if(!inited_slide)
@@ -183,50 +179,54 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           {
             int i = MAX(0, -ki);
             float *s = S + i;
-            const float *inp = ((float *)ivoid) + i + (size_t)roi_in->width * (j + jj);
-            const float *inps = ((float *)ivoid) + i + ((size_t)roi_in->width * (j + jj + kj) + ki);
+            const float *inp = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j + jj);
+            const float *inps = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j + jj + kj) + ki);
             const int last = roi_out->width + MIN(0, -ki);
-            for(; i < last; i++, inp ++, inps++, s++)
+            for(; i < last; i++, inp += 4, inps += 4, s++)
             {
-              // todo: inp and inps were array elements with indices over color channels. now are simpy value references
-              *s += (*inp - *inps) * (*inp - *inps) * norm;
+              for(int k = 0; k < 3; k++) s[0] += (inp[k] - inps[k]) * (inp[k] - inps[k]) * norm2[k];
             }
           }
           // only reuse this if we had a full stripe
-          if(Pm == size_patch && PM == size_patch) inited_slide = 1;
+          if(Pm == P && PM == P) inited_slide = 1;
         }
 
         // sliding window for this line:
         float *s = S;
         float slide = 0.0f;
         // sum up the first -P..P
-        for(int i = 0; i < 2 * size_patch + 1; i++) slide += s[i];
-        for(int i = 0; i < roi_out->width; i++, s++, ins++, out++)
+        for(int i = 0; i < 2 * P + 1; i++) slide += s[i];
+        for(int i = 0; i < roi_out->width; i++, s++, ins += 4, out += 4)
         {
-          if(i - size_patch > 0 && i + size_patch < roi_out->width) slide += s[size_patch] - s[-size_patch - 1];
+          if(i - P > 0 && i + P < roi_out->width) slide += s[P] - s[-P - 1];
           if(i + ki >= 0 && i + ki < roi_out->width)
           {
-            // todo: what is iv?
-            const float iv = *ins;
-
-            // calculate the value of nl mean using weight
-            *out += iv * calculate_weight(slide, h);
+            const float iv[4] = { ins[0], ins[1], ins[2], 1.0f };
+#if defined(_OPENMP) && defined(OPENMP_SIMD_)
+#pragma omp SIMD()
+#endif
+            for(size_t c = 0; c < 4; c++)
+            {
+              out[c] += iv[c] * gh(slide, sharpness);
+            }
           }
         }
-        if(inited_slide && j + size_patch + 1 + MAX(0, kj) < roi_out->height)
+        if(inited_slide && j + P + 1 + MAX(0, kj) < roi_out->height)
         {
           // sliding window in j direction:
           int i = MAX(0, -ki);
           s = S + i;
-          const float *inp = ((float *)ivoid) + i + (size_t)roi_in->width * (j + size_patch + 1);
-          const float *inps = ((float *)ivoid) + i + ((size_t)roi_in->width * (j + size_patch + 1 + kj) + ki);
-          const float *inm = ((float *)ivoid) + i + (size_t)roi_in->width * (j - size_patch);
-          const float *inms = ((float *)ivoid) + i + ((size_t)roi_in->width * (j - size_patch + kj) + ki);
+          const float *inp = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j + P + 1);
+          const float *inps = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j + P + 1 + kj) + ki);
+          const float *inm = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j - P);
+          const float *inms = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j - P + kj) + ki);
           const int last = roi_out->width + MIN(0, -ki);
-          for(; i < last; i++, inp++, inps++, inm++, inms++, s++)
+          for(; i < last; i++, inp += 4, inps += 4, inm += 4, inms += 4, s++)
           {
             float stmp = s[0];
-            stmp += ((*inp - *inps) * (*inp - *inps) - (*inm - *inms) * (*inm - *inms)) * norm;
+            for(int k = 0; k < 3; k++)
+              stmp += ((inp[k] - inps[k]) * (inp[k] - inps[k]) - (inm[k] - inms[k]) * (inm[k] - inms[k]))
+                      * norm2[k];
             s[0] = stmp;
           }
         }
@@ -236,7 +236,23 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
     }
   }
 
-  // todo: normalization for weights?
+  // normalize and apply chroma/luma blending
+  const float weight[4] = { d->luma, d->chroma, d->chroma, 1.0f };
+  const float invert[4] = { 1.0f - d->luma, 1.0f - d->chroma, 1.0f - d->chroma, 0.0f };
+
+  const float *const in = ((const float *const)ivoid);
+  float *const out = ((float *const)ovoid);
+
+#ifdef _OPENMP
+#pragma omp parallel for SIMD() default(none) schedule(static) collapse(2)
+#endif
+  for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
+  {
+    for(size_t c = 0; c < 4; c++)
+    {
+      out[k + c] = (in[k + c] * invert[c]) + (out[k + c] * (weight[c] / out[k + 3]));
+    }
+  }
 
   // free shared tmp memory:
   dt_free_align(Sa);
