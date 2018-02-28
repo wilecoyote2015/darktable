@@ -135,14 +135,14 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   float *values_summed_all = dt_alloc_align(64, (size_t)sizeof(float) * roi_out->width * dt_get_num_threads());
   // we want to sum up weights in col[1], and sum up results in col[0], so need to init to 0:
   // output
-  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * n_channels);
+  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height);
 
   // input. will be filled by precondition by anscombe transformed data
-  float *in = dt_alloc_align(64, (size_t) n_channels * sizeof(float) * roi_in->width * roi_in->height);
+  float *in = dt_alloc_align(64, (size_t) sizeof(float) * roi_in->width * roi_in->height);
 
 
   // because we don't perdfrm anscombe transform yet, simply copy input to in
-  memcpy(in, ivoid, (size_t)sizeof(float) * n_channels * roi_out->width * roi_out->height);
+  memcpy(in, ivoid, (size_t)sizeof(float) * roi_out->width * roi_out->height);
 
   // transform input data to gaussian noise with std. dev 1
   // todo!
@@ -156,9 +156,9 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   // for each shift vector
 
   const int neighborhood_size_scaled = neighborhood_size * size_raw_pattern;
-  for(int kj = -neighborhood_size_scaled; kj <= neighborhood_size_scaled; kj += size_raw_pattern)
+  for(int shift_y = -neighborhood_size_scaled; shift_y <= neighborhood_size_scaled; shift_y += size_raw_pattern)
   {
-    for(int ki = -neighborhood_size_scaled; ki <= neighborhood_size_scaled; ki += size_raw_pattern)
+    for(int shift_x = -neighborhood_size_scaled; shift_x <= neighborhood_size_scaled; shift_x += size_raw_pattern)
     {
       // TODO: adaptive K tests here!
       // TODO: expf eval for real bilateral experience :)
@@ -169,17 +169,17 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 // do this in parallel with a little threading overhead. could parallelize the outer loops with a bit more
 // memory
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(kj, ki, in, values_summed_all)
+#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(shift_y, shift_x, in, values_summed_all)
 #endif
-      for(int j = 0; j < roi_out->height; j++)
+      for(int index_y = 0; index_y < roi_out->height; index_y++)
       {
-        if(j + kj < 0 || j + kj >= roi_out->height) continue;
+        if(index_y + shift_y < 0 || index_y + shift_y >= roi_out->height) continue;
         float *values_summed_line = values_summed_all + dt_get_thread_num() * roi_out->width;
-        const float *input_at_j = in + n_channels * ((size_t)roi_in->width * (j + kj) + ki);
-        float *out = ((float *)ovoid) + (size_t) n_channels * roi_out->width * j;
+        const float *input_at_j = in + n_channels * ((size_t)roi_in->width * (index_y + shift_y) + shift_x);
+        float *out = ((float *)ovoid) + (size_t) n_channels * roi_out->width * index_y;
 
-        const int Pm = MIN(MIN(patch_size, j + kj), j);
-        const int PM = MIN(MIN(patch_size, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
+        const int Pm = MIN(MIN(patch_size, index_y + shift_y), index_y);
+        const int PM = MIN(MIN(patch_size, roi_out->height - 1 - index_y - shift_y), roi_out->height - 1 - index_y);
         // first line of every thread
         // TODO: also every once in a while to assert numerical precision!
         if(!inited_slide)
@@ -188,11 +188,11 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           memset(values_summed_line, 0x0, sizeof(float) * roi_out->width);
           for(int jj = -Pm; jj <= PM; jj++)
           {
-            int i = MAX(0, -ki);
+            int i = MAX(0, -shift_x);
             float *s = values_summed_line + i;
-            const float *inp = in + n_channels * i + (size_t) n_channels * roi_in->width * (j + jj);
-            const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j + jj + kj) + ki);
-            const int last = roi_out->width + MIN(0, -ki);
+            const float *inp = in + n_channels * i + (size_t) n_channels * roi_in->width * (index_y + jj);
+            const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (index_y + jj + shift_y) + shift_x);
+            const int last = roi_out->width + MIN(0, -shift_x);
             for(; i < last; i++, inp += n_channels, inps += n_channels, s++)
             {
               for(int k = 0; k < 1; k++) s[0] += (inp[k] - inps[k]) * (inp[k] - inps[k]);  // todo: replace 1 by n_colors? even need loop here?
@@ -213,7 +213,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           // XXX    numerical precision will not forgive us:
           if(i - patch_size > 0 && i + patch_size < roi_out->width)
             slide += values_summed_window[patch_size] - values_summed_window[-patch_size - 1];
-          if(i + ki >= 0 && i + ki < roi_out->width)
+          if(i + shift_x >= 0 && i + shift_x < roi_out->width)
           {
             // TODO: could put that outside the loop.
             // DEBUG XXX bring back to computable range:
@@ -233,16 +233,16 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
             }
           }
         }
-        if(inited_slide && j + patch_size + 1 + MAX(0, kj) < roi_out->height)
+        if(inited_slide && index_y + patch_size + 1 + MAX(0, shift_y) < roi_out->height)
         {
-          // sliding window in j direction:
-          int i = MAX(0, -ki);
+          // sliding window in index_y direction:
+          int i = MAX(0, -shift_x);
           values_summed_window = values_summed_line + i;
-          const float *inp = in + n_channels * i + n_channels * (size_t)roi_in->width * (j + patch_size + 1);
-          const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j + patch_size + 1 + kj) + ki);
-          const float *inm = in + n_channels * i + n_channels * (size_t)roi_in->width * (j - patch_size);
-          const float *inms = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j - patch_size + kj) + ki);
-          const int last = roi_out->width + MIN(0, -ki);
+          const float *inp = in + n_channels * i + n_channels * (size_t)roi_in->width * (index_y + patch_size + 1);
+          const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (index_y + patch_size + 1 + shift_y) + shift_x);
+          const float *inm = in + n_channels * i + n_channels * (size_t)roi_in->width * (index_y - patch_size);
+          const float *inms = in + n_channels * i + n_channels * ((size_t)roi_in->width * (index_y - patch_size + shift_y) + shift_x);
+          const int last = roi_out->width + MIN(0, -shift_x);
           for(; i < last; i++, inp += n_channels, inps += n_channels, inm += n_channels, inms += n_channels, values_summed_window++)
           {
             float stmp = values_summed_window[0];
