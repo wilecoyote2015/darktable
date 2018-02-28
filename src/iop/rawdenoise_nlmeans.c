@@ -37,20 +37,26 @@ DT_MODULE_INTROSPECTION(1, dt_iop_rawdenoise_nlmeans_params_t)
 
 typedef struct dt_iop_rawdenoise_nlmeans_params_t
 {
-  float threshold;
+  float neighborhood_size;
+  float patch_size;
+  float h;
 } dt_iop_rawdenoise_nlmeans_params_t;
 
 typedef struct dt_iop_rawdenoise_nlmeans_gui_data_t
 {
   GtkWidget *stack;
   GtkWidget *box_raw;
-  GtkWidget *threshold;
+  GtkWidget *neighborhood_size;
+  GtkWidget *patch_size;
+  GtkWidget *h;
   GtkWidget *label_non_raw;
 } dt_iop_rawdenoise_nlmeans_gui_data_t;
 
 typedef struct dt_iop_rawdenoise_nlmeans_data_t
 {
-  float threshold;
+  int neighborhood_size;
+  int patch_size;
+  float h;
 } dt_iop_rawdenoise_nlmeans_data_t;
 
 typedef struct dt_iop_rawdenoise_nlmeans_global_data_t
@@ -74,14 +80,18 @@ int groups()
 
 void init_key_accels(dt_iop_module_so_t *self)
 {
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "noise threshold"));
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "filter strength"));
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "patch size"));
+  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "neighborhood size"));
 }
 
 void connect_key_accels(dt_iop_module_t *self)
 {
   dt_iop_rawdenoise_nlmeans_gui_data_t *g = (dt_iop_rawdenoise_nlmeans_gui_data_t *)self->gui_data;
 
-  dt_accel_connect_slider_iop(self, "noise threshold", GTK_WIDGET(g->threshold));
+  dt_accel_connect_slider_iop(self, "filter strength", GTK_WIDGET(g->h));
+  dt_accel_connect_slider_iop(self, "patch size", GTK_WIDGET(g->patch_size));
+  dt_accel_connect_slider_iop(self, "neighborhood size", GTK_WIDGET(g->neighborhood_size));
 }
 
 typedef union floatint_t
@@ -166,7 +176,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
       // calculate square differences for current shift
 
       // todo: remark: seems data layout is [rows][cols], so that current pixel is referenced at index [rows * width + cols]
-      // todo: take care of boundaries!
+      // todo: take care of boundaries! should be done now
+      // todo: in all the for-loops, swap x and y loops maybe, and pre-calculate x*width. We don't want to calc it every time!
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
         if (y_shifted < 0 || y_shifted >= height) continue;
@@ -249,7 +260,10 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
 void reload_defaults(dt_iop_module_t *module)
 {
   // init defaults:
-  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .threshold = 0.01 };
+  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .h = 1.0 , .neighborhood_size = 4,
+                                                                                  .patch_size = 4};
+//  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .neighborhood_size = 4 };
+//  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .patch_size = 4 };
 
   // we might be called from presets update infrastructure => there is no image
   if(!module->dev) goto end;
@@ -293,7 +307,10 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
   dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)params;
   dt_iop_rawdenoise_nlmeans_data_t *d = (dt_iop_rawdenoise_nlmeans_data_t *)piece->data;
 
-  d->threshold = p->threshold;
+  d->patch_size = p->patch_size;
+  d->neighborhood_size = p->neighborhood_size;
+  d->h = p->h;
+
 
   if (!(pipe->image.flags & DT_IMAGE_RAW))
     piece->enabled = 0;
@@ -316,17 +333,37 @@ void gui_update(dt_iop_module_t *self)
   dt_iop_rawdenoise_nlmeans_gui_data_t *g = (dt_iop_rawdenoise_nlmeans_gui_data_t *)self->gui_data;
   dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)self->params;
 
-  dt_bauhaus_slider_set(g->threshold, p->threshold);
+  dt_bauhaus_slider_set(g->patch_size, p->patch_size);
+  dt_bauhaus_slider_set(g->neighborhood_size, p->neighborhood_size);
+  dt_bauhaus_slider_set(g->h, p->h);
 
   gtk_stack_set_visible_child_name(GTK_STACK(g->stack), self->hide_enable_button ? "non_raw" : "raw");
 }
 
-static void threshold_callback(GtkWidget *slider, gpointer user_data)
+static void patch_size_callback(GtkWidget *slider, gpointer user_data)
 {
   dt_iop_module_t *self = (dt_iop_module_t *)user_data;
   if(self->dt->gui->reset) return;
   dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)self->params;
-  p->threshold = dt_bauhaus_slider_get(slider);
+  p->patch_size = (int)dt_bauhaus_slider_get(slider);
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
+static void neighborhood_size_callback(GtkWidget *slider, gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  if(self->dt->gui->reset) return;
+  dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)self->params;
+  p->neighborhood_size = (int)dt_bauhaus_slider_get(slider);
+  dt_dev_add_history_item(darktable.develop, self, TRUE);
+}
+
+static void h_callback(GtkWidget *slider, gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  if(self->dt->gui->reset) return;
+  dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)self->params;
+  p->h = dt_bauhaus_slider_get(slider);
   dt_dev_add_history_item(darktable.develop, self, TRUE);
 }
 
@@ -344,11 +381,23 @@ void gui_init(dt_iop_module_t *self)
 
   g->box_raw = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
-  /* threshold */
-  g->threshold = dt_bauhaus_slider_new_with_range(self, 0.0, 0.1, 0.001, p->threshold, 3);
-  gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->threshold), TRUE, TRUE, 0);
-  dt_bauhaus_widget_set_label(g->threshold, NULL, _("noise threshold"));
-  g_signal_connect(G_OBJECT(g->threshold), "value-changed", G_CALLBACK(threshold_callback), self);
+  // neighborhood_size
+  g->neighborhood_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->neighborhood_size, 0);  // todo: digits=2 correct?
+  gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->neighborhood_size), TRUE, TRUE, 0);
+  dt_bauhaus_widget_set_label(g->neighborhood_size, NULL, _("neighborhood size"));
+  g_signal_connect(G_OBJECT(g->neighborhood_size), "value-changed", G_CALLBACK(neighborhood_size_callback), self);
+
+  // patch_size
+  g->patch_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->patch_size, 0);  // todo: digits=2 correct?
+  gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->patch_size), TRUE, TRUE, 0);
+  dt_bauhaus_widget_set_label(g->patch_size, NULL, _("patch size"));
+  g_signal_connect(G_OBJECT(g->patch_size), "value-changed", G_CALLBACK(patch_size_callback), self);
+
+  // h
+  g->h = dt_bauhaus_slider_new_with_range(self, 0.01f, 2.0f, 0.01, p->h, 2);  // todo: digits=2 correct?
+  gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->h), TRUE, TRUE, 0);
+  dt_bauhaus_widget_set_label(g->h, NULL, _("filter strength"));
+  g_signal_connect(G_OBJECT(g->h), "value-changed", G_CALLBACK(h_callback), self);
 
   gtk_widget_show_all(g->box_raw);
   gtk_stack_add_named(GTK_STACK(g->stack), g->box_raw, "raw");
