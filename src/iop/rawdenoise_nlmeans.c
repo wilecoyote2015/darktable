@@ -106,7 +106,7 @@ static inline float fast_mexp2f(const float x)
 
 static float calculate_weight(const float value, const float h)
 {
-  const float exponent = value / h*h;
+  const float exponent = value / (h*h);
   return fast_mexp2f(exponent);
 }
 
@@ -115,119 +115,140 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 {
   // this is called for preview and full pipe separately, each with its own pixelpipe piece.
   // get our data struct:
-  const dt_iop_rawdenoise_nlmeans_params_t *const d = (dt_iop_rawdenoise_nlmeans_params_t *)piece->data;
+  const struct dt_iop_rawdenoise_nlmeans_params_t *const d = (const dt_iop_rawdenoise_nlmeans_params_t *const)piece->data;
+
+  const int n_colors = piece->colors;  // todo: isn't it simply 1?
+
+  // TODO: fixed K to use adaptive size trading variance and bias!
+  // adjust to zoom size:
+  const float scale = fmin(roi_in->scale, 2.0f) / fmax(piece->iscale, 1.0f);
+  const int patch_size = 1; // pixel filter size
+  const int neighborhood_size = 1;         // nbhood
+
+  const int size_raw_pattern = 2; // todo: derive from sensor type
 
 
+  const int n_channels = 2;  // number of channels is number of colors + 1 for weights
 
-//  // adjust to zoom size:
-//  const int P = ceilf(d->radius * fmin(roi_in->scale, 2.0f) / fmax(piece->iscale, 1.0f)); // pixel filter size
-//  const int K = ceilf(21 * fmin(roi_in->scale, 2.0f) / fmax(piece->iscale, 1.0f));         // nbhood
-//  const float sharpness = 3000.0f / (1.0f + d->strength);
-//  if(P < 1)
-//  {
-//    // nothing to do from this distance:
-//    memcpy(ovoid, ivoid, (size_t)sizeof(float) * 4 * roi_out->width * roi_out->height);
-//    return;
-//  }
+  // P == 0 : this will degenerate to a (fast) bilateral filter.
 
-  // patch and neighorhood size
-  // todo: get from data
-  const int size_patch = 7;
-  const int size_neighborhood = 10;
-  const float h = 1.0f;  // todo: probably wrong value
+  float *values_summed_all = dt_alloc_align(64, (size_t)sizeof(float) * roi_out->width * dt_get_num_threads());
+  // we want to sum up weights in col[1], and sum up results in col[0], so need to init to 0:
+  // output
+  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * n_channels);
+
+  // input. will be filled by precondition by anscombe transformed data
+  float *in = dt_alloc_align(64, (size_t) n_channels * sizeof(float) * roi_in->width * roi_in->height);
 
 
-  // get norm to norm data to 1
-  // todo: this will not be necessary with variance stabilization
-  float max_value = 1.0f; // todo: this is most probably not correct!
-  const float norm2[2] = {1.0f / max_value, 1.0f};
+  // because we don't perdfrm anscombe transform yet, simply copy input to in
+  memcpy(in, ivoid, (size_t)sizeof(float) * n_channels * roi_out->width * roi_out->height);
 
-
-  float *Sa = dt_alloc_align(64, (size_t)sizeof(float) * roi_out->width * dt_get_num_threads());
-  // we want to sum up weights in col[3], so need to init to 0:
-  memset(ovoid, 0x0, (size_t)sizeof(float) * roi_out->width * roi_out->height * 4);
+  // transform input data to gaussian noise with std. dev 1
+  // todo!
+//  const float wb[3] = { piece->pipe->dsc.processed_maximum[0] * d->strength * (scale * scale),
+//                        piece->pipe->dsc.processed_maximum[1] * d->strength * (scale * scale),
+//                        piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale) };
+//  const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
+//  const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
+//  precondition((float *)ivoid, in, roi_in->width, roi_in->height, aa, bb);
 
   // for each shift vector
-  for(int kj = -K; kj <= K; kj++)
+
+  const int neighborhood_size_scaled = neighborhood_size * size_raw_pattern;
+  for(int kj = -neighborhood_size_scaled; kj <= neighborhood_size_scaled; kj += size_raw_pattern)
   {
-    for(int ki = -K; ki <= K; ki++)
+    for(int ki = -neighborhood_size_scaled; ki <= neighborhood_size_scaled; ki += size_raw_pattern)
     {
+      // TODO: adaptive K tests here!
+      // TODO: expf eval for real bilateral experience :)
+
       int inited_slide = 0;
 // don't construct summed area tables but use sliding window! (applies to cpu version res < 1k only, or else
 // we will add up errors)
 // do this in parallel with a little threading overhead. could parallelize the outer loops with a bit more
 // memory
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(kj, ki, Sa)
+#pragma omp parallel for schedule(static) default(none) firstprivate(inited_slide) shared(kj, ki, in, values_summed_all)
 #endif
       for(int j = 0; j < roi_out->height; j++)
       {
         if(j + kj < 0 || j + kj >= roi_out->height) continue;
-        float *S = Sa + (size_t)dt_get_thread_num() * roi_out->width;
-        const float *ins = ((float *)ivoid) + 4 * ((size_t)roi_in->width * (j + kj) + ki);
-        float *out = ((float *)ovoid) + 4 * (size_t)roi_out->width * j;
+        float *values_summed_line = values_summed_all + dt_get_thread_num() * roi_out->width;
+        const float *input_at_j = in + n_channels * ((size_t)roi_in->width * (j + kj) + ki);
+        float *out = ((float *)ovoid) + (size_t) n_channels * roi_out->width * j;
 
-        const int Pm = MIN(MIN(P, j + kj), j);
-        const int PM = MIN(MIN(P, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
+        const int Pm = MIN(MIN(patch_size, j + kj), j);
+        const int PM = MIN(MIN(patch_size, roi_out->height - 1 - j - kj), roi_out->height - 1 - j);
         // first line of every thread
         // TODO: also every once in a while to assert numerical precision!
         if(!inited_slide)
         {
           // sum up a line
-          memset(S, 0x0, sizeof(float) * roi_out->width);
+          memset(values_summed_line, 0x0, sizeof(float) * roi_out->width);
           for(int jj = -Pm; jj <= PM; jj++)
           {
             int i = MAX(0, -ki);
-            float *s = S + i;
-            const float *inp = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j + jj);
-            const float *inps = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j + jj + kj) + ki);
+            float *s = values_summed_line + i;
+            const float *inp = in + n_channels * i + (size_t) n_channels * roi_in->width * (j + jj);
+            const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j + jj + kj) + ki);
             const int last = roi_out->width + MIN(0, -ki);
-            for(; i < last; i++, inp += 4, inps += 4, s++)
+            for(; i < last; i++, inp += n_channels, inps += n_channels, s++)
             {
-              for(int k = 0; k < 3; k++) s[0] += (inp[k] - inps[k]) * (inp[k] - inps[k]) * norm2[k];
+              for(int k = 0; k < 1; k++) s[0] += (inp[k] - inps[k]) * (inp[k] - inps[k]);  // todo: replace 1 by n_colors? even need loop here?
             }
           }
           // only reuse this if we had a full stripe
-          if(Pm == P && PM == P) inited_slide = 1;
+          if(Pm == patch_size && PM == patch_size) inited_slide = 1;
         }
 
         // sliding window for this line:
-        float *s = S;
-        float slide = 0.0f;
+        float *values_summed_window = values_summed_line;
+        float slide = 0.0f;  // sum of patch
         // sum up the first -P..P
-        for(int i = 0; i < 2 * P + 1; i++) slide += s[i];
-        for(int i = 0; i < roi_out->width; i++, s++, ins += 4, out += 4)
+        for(int i = 0; i < 2 * patch_size + 1; i++) slide += values_summed_window[i];
+        for(int i = 0; i < roi_out->width; i++, values_summed_window++, input_at_j += n_channels, out += n_channels)
         {
-          if(i - P > 0 && i + P < roi_out->width) slide += s[P] - s[-P - 1];
+          // FIXME: the comment above is actually relevant even for 1000 px width already.
+          // XXX    numerical precision will not forgive us:
+          if(i - patch_size > 0 && i + patch_size < roi_out->width)
+            slide += values_summed_window[patch_size] - values_summed_window[-patch_size - 1];
           if(i + ki >= 0 && i + ki < roi_out->width)
           {
-            const float iv[4] = { ins[0], ins[1], ins[2], 1.0f };
+            // TODO: could put that outside the loop.
+            // DEBUG XXX bring back to computable range:
+            // norm the distance according to patch size
+            // todo: shouldn't it be pixel count, which is square 2 * patch_size + 1? Is done now. see of this works.
+            const int pixel_count_patch = (2 * patch_size + 1) * (2 * patch_size + 1);
+            const float norm = 1.0f / (float)pixel_count_patch;  // todo: why the 0.15f ? replaced by 1 now.
+            const float iv[2] = { input_at_j[0], 1.0f };  // todo: get this dynamically with n_colors?
 #if defined(_OPENMP) && defined(OPENMP_SIMD_)
 #pragma omp SIMD()
 #endif
-            for(size_t c = 0; c < 4; c++)
+            // calculate weight and insert weighted sum in valuue iv[0] and weight in iv[1]
+            for(size_t c = 0; c < 2; c++)  // todo: use n_channels?
             {
-              out[c] += iv[c] * gh(slide, sharpness);
+              out[c] += iv[c] * fast_mexp2f(fmaxf(0.0f, slide * norm - 2.0f) / 10000000000000000000.0f);  // todo: try without substraction of 2sigma.
+              // todo: don't divide by large number, but by h**2
             }
           }
         }
-        if(inited_slide && j + P + 1 + MAX(0, kj) < roi_out->height)
+        if(inited_slide && j + patch_size + 1 + MAX(0, kj) < roi_out->height)
         {
           // sliding window in j direction:
           int i = MAX(0, -ki);
-          s = S + i;
-          const float *inp = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j + P + 1);
-          const float *inps = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j + P + 1 + kj) + ki);
-          const float *inm = ((float *)ivoid) + 4 * i + 4 * (size_t)roi_in->width * (j - P);
-          const float *inms = ((float *)ivoid) + 4 * i + 4 * ((size_t)roi_in->width * (j - P + kj) + ki);
+          values_summed_window = values_summed_line + i;
+          const float *inp = in + n_channels * i + n_channels * (size_t)roi_in->width * (j + patch_size + 1);
+          const float *inps = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j + patch_size + 1 + kj) + ki);
+          const float *inm = in + n_channels * i + n_channels * (size_t)roi_in->width * (j - patch_size);
+          const float *inms = in + n_channels * i + n_channels * ((size_t)roi_in->width * (j - patch_size + kj) + ki);
           const int last = roi_out->width + MIN(0, -ki);
-          for(; i < last; i++, inp += 4, inps += 4, inm += 4, inms += 4, s++)
+          for(; i < last; i++, inp += n_channels, inps += n_channels, inm += n_channels, inms += n_channels, values_summed_window++)
           {
-            float stmp = s[0];
-            for(int k = 0; k < 3; k++)
-              stmp += ((inp[k] - inps[k]) * (inp[k] - inps[k]) - (inm[k] - inms[k]) * (inm[k] - inms[k]))
-                      * norm2[k];
-            s[0] = stmp;
+            float stmp = values_summed_window[0];
+            for(int k = 0; k < 1; k++)  // todo: replace 1 by n_colors? even need loop here?
+              stmp += ((inp[k] - inps[k]) * (inp[k] - inps[k]) - (inm[k] - inms[k]) * (inm[k] - inms[k]));
+            values_summed_window[0] = stmp;
           }
         }
         else
@@ -236,26 +257,28 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
     }
   }
 
-  // normalize and apply chroma/luma blending
-  const float weight[4] = { d->luma, d->chroma, d->chroma, 1.0f };
-  const float invert[4] = { 1.0f - d->luma, 1.0f - d->chroma, 1.0f - d->chroma, 0.0f };
-
-  const float *const in = ((const float *const)ivoid);
   float *const out = ((float *const)ovoid);
 
+// normalize
 #ifdef _OPENMP
-#pragma omp parallel for SIMD() default(none) schedule(static) collapse(2)
+#pragma omp parallel for default(none) schedule(static)
 #endif
-  for(size_t k = 0; k < (size_t)ch * roi_out->width * roi_out->height; k += ch)
+  for(size_t k = 0; k < (size_t)n_colors * roi_out->width * roi_out->height; k += n_colors)
   {
-    for(size_t c = 0; c < 4; c++)
+    if(out[k + 1] <= 0.0f) continue;
+    for(size_t c = 0; c < 1; c++)  // todo: c < num_colors?
     {
-      out[k + c] = (in[k + c] * invert[c]) + (out[k + c] * (weight[c] / out[k + 3]));
+      out[k + c] *= (1.0f / out[k + 1]);  // todo: replace 1 by n_colors?
     }
   }
 
   // free shared tmp memory:
-  dt_free_align(Sa);
+  dt_free_align(values_summed_all);
+  dt_free_align(in);
+
+  // reverse anscombe transform and scaling to data space
+  // todo!
+//  backtransform((float *)ovoid, roi_in->width, roi_in->height, aa, bb);
 
   if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
 }
