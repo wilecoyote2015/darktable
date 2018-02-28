@@ -54,8 +54,8 @@ typedef struct dt_iop_rawdenoise_nlmeans_gui_data_t
 
 typedef struct dt_iop_rawdenoise_nlmeans_data_t
 {
-  int neighborhood_size;
-  int patch_size;
+  float neighborhood_size;
+  float patch_size;
   float h;
 } dt_iop_rawdenoise_nlmeans_data_t;
 
@@ -81,15 +81,15 @@ int groups()
 void init_key_accels(dt_iop_module_so_t *self)
 {
   dt_accel_register_slider_iop(self, FALSE, NC_("accel", "filter strength"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "patch size"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "neighborhood size"));
+//  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "patch size"));
+//  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "neighborhood size"));
 }
 
 void connect_key_accels(dt_iop_module_t *self)
 {
   dt_iop_rawdenoise_nlmeans_gui_data_t *g = (dt_iop_rawdenoise_nlmeans_gui_data_t *)self->gui_data;
 
-  dt_accel_connect_slider_iop(self, "filter strength", GTK_WIDGET(g->h));
+  dt_accel_connect_slider_iop(self, "filter_strength", GTK_WIDGET(g->h));
   dt_accel_connect_slider_iop(self, "patch size", GTK_WIDGET(g->patch_size));
   dt_accel_connect_slider_iop(self, "neighborhood size", GTK_WIDGET(g->neighborhood_size));
 }
@@ -120,6 +120,12 @@ static float calculate_weight(const float value, const float h)
   return fast_mexp2f(exponent);
 }
 
+// todo: we will need only width or height!
+static inline int index_coords(const int x, const int y, const int width, const int height)
+{
+  return y * width + x;  // todo: correct?
+}
+
 void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
                    void *const ovoid, const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
@@ -129,9 +135,9 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   // TODO: fixed K to use adaptive size trading variance and bias!
   // adjust to zoom size:
-  const int patch_size = 4; // pixel filter size
-  const int neighborhood_size = 10;         // nbhood
-  const float h = 1.1f;
+  const int patch_size = (int) d->patch_size; // pixel filter size
+  const int neighborhood_size = (int)d->neighborhood_size;         // nbhood
+  const float h = d->h;
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
   const int size_raw_pattern = 2; // todo: derive from sensor type
@@ -174,24 +180,21 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
     for(int shift_x = -neighborhood_size_scaled; shift_x <= neighborhood_size_scaled; shift_x += size_raw_pattern)
     {
       // calculate square differences for current shift
-
-      // todo: remark: seems data layout is [rows][cols], so that current pixel is referenced at index [rows * width + cols]
-      // todo: take care of boundaries! should be done now
       // todo: in all the for-loops, swap x and y loops maybe, and pre-calculate x*width. We don't want to calc it every time!
+      // todo: in some cases, we don't need to calc coordinates, but do that in the for loops!
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
         if (y_shifted < 0 || y_shifted >= height) continue;
         for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++)
         {
           if (x_shifted < 0 || x_shifted >= width) continue;
-          float difference = in[x * width +y] - in[x_shifted * width + y_shifted];
-          square_differences[x * width + y] = difference * difference;
+          float difference = in[index_coords(x, y, width, height)] - in[index_coords(x_shifted, y_shifted, width, height)];
+          square_differences[index_coords(x, y, width, height)] = difference * difference;
         }
       }
 
       // for each pixel, calculate the summed quare difference it's patch and the weight from that.
       // add the value of shifted center pixel, multiplied with weight, to the output, and add weight to summed weights
-      // todo: take care of boundaries!
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
         if (y_shifted < 0 || y_shifted >= height) continue;
@@ -209,7 +212,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
             for(int y_patch = y - patch_size; y_patch <= y + patch_size; y_patch++)
             {
               if (y_patch < 0 || y_patch >= height) continue;
-              distance_patch += square_differences[x_patch * width + y_patch];
+              distance_patch += square_differences[index_coords(x_patch, y_patch, width, height)];
             }
           }
 
@@ -218,8 +221,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
           // calculate weight
           float weight = calculate_weight(distance_patch, h);
-          weigths_summed[x * width + y] += weight;
-          out[x * width + y] += in[x_shifted * width + y_shifted] * weight;
+          weigths_summed[index_coords(x, y, width, height)] += weight;
+          out[index_coords(x, y, width, height)] += in[index_coords(x_shifted, y_shifted, width, height)] * weight;
 
         }
       }
@@ -227,10 +230,11 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   }
 
   // normalize
+  // todo: do coordinate calcs only one time, or better, make it in the for lop head!
   for(int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++)
     {
-      out[x * width + y] /= weigths_summed[x * width + y];
+      out[index_coords(x, y, width, height)] /= weigths_summed[index_coords(x, y, width, height)];
     }
   }
 
@@ -260,8 +264,8 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
 void reload_defaults(dt_iop_module_t *module)
 {
   // init defaults:
-  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .h = 1.0 , .neighborhood_size = 4,
-                                                                                  .patch_size = 4};
+  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .h = 1.0f , .neighborhood_size = 4.0f,
+                                                                                  .patch_size = 4.0f};
 //  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .neighborhood_size = 4 };
 //  dt_iop_rawdenoise_nlmeans_params_t tmp = (dt_iop_rawdenoise_nlmeans_params_t){ .patch_size = 4 };
 
@@ -307,8 +311,8 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
   dt_iop_rawdenoise_nlmeans_params_t *p = (dt_iop_rawdenoise_nlmeans_params_t *)params;
   dt_iop_rawdenoise_nlmeans_data_t *d = (dt_iop_rawdenoise_nlmeans_data_t *)piece->data;
 
-  d->patch_size = p->patch_size;
-  d->neighborhood_size = p->neighborhood_size;
+  d->patch_size = (int)p->patch_size;
+  d->neighborhood_size = (int)p->neighborhood_size;
   d->h = p->h;
 
 
@@ -382,19 +386,19 @@ void gui_init(dt_iop_module_t *self)
   g->box_raw = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
   // neighborhood_size
-  g->neighborhood_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->neighborhood_size, 0);  // todo: digits=2 correct?
+  g->neighborhood_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->neighborhood_size, 0);
   gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->neighborhood_size), TRUE, TRUE, 0);
   dt_bauhaus_widget_set_label(g->neighborhood_size, NULL, _("neighborhood size"));
   g_signal_connect(G_OBJECT(g->neighborhood_size), "value-changed", G_CALLBACK(neighborhood_size_callback), self);
 
   // patch_size
-  g->patch_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->patch_size, 0);  // todo: digits=2 correct?
+  g->patch_size = dt_bauhaus_slider_new_with_range(self, 1.0f, 10.0f, 1., p->patch_size, 0);
   gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->patch_size), TRUE, TRUE, 0);
   dt_bauhaus_widget_set_label(g->patch_size, NULL, _("patch size"));
   g_signal_connect(G_OBJECT(g->patch_size), "value-changed", G_CALLBACK(patch_size_callback), self);
 
   // h
-  g->h = dt_bauhaus_slider_new_with_range(self, 0.01f, 2.0f, 0.01, p->h, 2);  // todo: digits=2 correct?
+  g->h = dt_bauhaus_slider_new_with_range(self, 0.01f, 2.0f, 0.01, p->h, 2);
   gtk_box_pack_start(GTK_BOX(g->box_raw), GTK_WIDGET(g->h), TRUE, TRUE, 0);
   dt_bauhaus_widget_set_label(g->h, NULL, _("filter strength"));
   g_signal_connect(G_OBJECT(g->h), "value-changed", G_CALLBACK(h_callback), self);
