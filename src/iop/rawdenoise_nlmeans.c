@@ -120,13 +120,13 @@ static float calculate_weight(const float value, const float h)
   return fast_mexp2f(exponent);
 }
 
-static inline void transform_bayer(float *const buf, const int width, const int height, const float a[4],
+static inline void transform_bayer(uint16_t *const input, float *const output, const int width, const int height, const float a[4],
                                        const float b[4])
 {
   // transform pixels for each color sepatarely
   for (int y = 0; y < height; y += 2)
   {
-    for (int x = 0; x < width; x+= 2)
+    for (int x = 0; x < width; x += 2)
     {
       // todo: take care of orders in elements in a and b according to bayer pattern!
       for (int color_y = 0; color_y < 2; color_y++)
@@ -136,14 +136,14 @@ static inline void transform_bayer(float *const buf, const int width, const int 
           int index_image = (y + color_y) * width + x + color_x;
           int index_color = 2 * color_y + color_x;
 
-          buf[index_image] = 2. * sqrtf((buf[index_image] - b[index_color])/ a[index_color] + 3. / 8.);
+          output[index_image] = 2.0f * sqrtf((input[index_image] - b[index_color])/ a[index_color] + 3. / 8.);
         }
       }
     }
   }
 }
 
-static inline void backtransform_bayer(float *const buf, const int width, const int height, const float a[4],
+static inline void backtransform_bayer(float *const input, uint16_t *const output, const int width, const int height, const float a[4],
                                  const float b[4])
 {
   // transform pixels for each color sepatarely
@@ -159,13 +159,13 @@ static inline void backtransform_bayer(float *const buf, const int width, const 
           int index_image = (y + color_y) * width + x + color_x;
           int index_color = 2 * color_y + color_x;
 
-          float value = buf[index_image];
+          float value = input[index_image];
           if (value > 0) {
             float value_tranformed = 1. / 4. * value + 1. / 4. * sqrtf(3. / 2.) / value - 11. / 8. * 1.0 / (value * value)
                                      + 5. / 8. * sqrtf(3. / 2.) * 1.0 / (value * value * value) - 1. / 8.;
-            buf[index_image] = a[index_color] * value_tranformed + b[index_color];
+            output[index_image] = (uint16_t) (a[index_color] * value_tranformed + b[index_color]);
           } else {
-            buf[index_image] = b[index_color];
+            output[index_image] = (uint16_t) b[index_color];
           }
         }
       }
@@ -183,7 +183,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 {
 
   // todo: the input and output are now uint16! Modify the code accordingly!
-  // todo: handle divisions by zero, also in anscombe transforms!
+  // todo: handle divisions by zero, also in_transformed anscombe transforms!
 
   // this is called for preview and full pipe separately, each with its own pixelpipe piece.
   // get our data struct:
@@ -197,23 +197,24 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
   // todo: there should be given by profile
-  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
-  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
+  const float aa[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+//  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
+  const float bb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
   const int size_raw_pattern = 2; // todo: derive from sensor type
 
   const int width = roi_in->width;
   const int height = roi_in->height;
 
-  // get maximum and minimum in dataset // todo: only for testing!
-  float minimum = 100.0f, maximum = 0.0f;
-  float* p_in = (float*) ivoid;
-  for (int index = 0; index < width * height; index++)
-  {
-    float value = p_in[index];
-    if (value < minimum) minimum = value;
-    if (value > maximum) maximum = value;
-  }
+  // get maximum and minimum in_transformed dataset // todo: only for testing!
+//  float minimum = 100.0f, maximum = 0.0f;
+//  float* p_in = (float*) ivoid;
+//  for (int index = 0; index < width * height; index++)
+//  {
+//    float value = p_in[index];
+//    if (value < minimum) minimum = value;
+//    if (value > maximum) maximum = value;
+//  }
 
 
 
@@ -221,22 +222,24 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   float *square_differences = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
   float *weigths_summed = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
-  // we want to sum up weights in col[1], and sum up results in col[0], so need to init to 0:
-  // output
-  memset(ovoid, 0x0, (size_t)sizeof(float) * width * height);
 
-  // input. will be filled by precondition by anscombe transformed data
-  float *in = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
+  // float output prior to anscombe back transform
+  // set to zero, as we add the values there
+  float *out = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
+  memset(out, 0x0, (size_t)sizeof(float) * width * height);
 
-  // transform data // todo still wrong
-//  transform_bayer(in, width, height, aa, bb);
+  // input. will be filled by precondition by anscombe transformed data, which also converts the input uint16 to float
+  float *in_transformed = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
+
+  // transform data from uint16 ivoid intp float in_transformed
+  transform_bayer((uint16_t*) ivoid, in_transformed, width, height, aa, bb);
 
 
-  // because we don't perdfrm anscombe transform yet, simply copy input to in
-  memcpy(in, ivoid, (size_t)sizeof(float) * width * height);
+//  // because we don't perdfrm anscombe transform yet, simply copy input to in_transformed
+//  memcpy(in_transformed, ivoid, (size_t)sizeof(float) * width * height);
 
-  // get float pointer from ovoid
-  float *const out = ((float *const)ovoid);
+//  // get float pointer from ovoid
+//  float *const out = ((float *const)ovoid);
 
   // transform input data to gaussian noise with std. dev 1
   // todo!
@@ -245,7 +248,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 //                        piece->pipe->dsc.processed_maximum[2] * d->strength * (scale * scale) };
 //  const float aa[3] = { d->a[1] * wb[0], d->a[1] * wb[1], d->a[1] * wb[2] };
 //  const float bb[3] = { d->b[1] * wb[0], d->b[1] * wb[1], d->b[1] * wb[2] };
-//  precondition((float *)ivoid, in, roi_in->width, roi_in->height, aa, bb);
+//  precondition((float *)ivoid, in_transformed, roi_in->width, roi_in->height, aa, bb);
 
   // for each shift vector
 
@@ -255,8 +258,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
     for(int shift_x = -neighborhood_size_scaled; shift_x <= neighborhood_size_scaled; shift_x += size_raw_pattern)
     {
       // calculate square differences for current shift
-      // todo: in all the for-loops, swap x and y loops maybe, and pre-calculate x*width. We don't want to calc it every time!
-      // todo: in some cases, we don't need to calc coordinates, but do that in the for loops!
+      // todo: in_transformed all the for-loops, swap x and y loops maybe, and pre-calculate x*width. We don't want to calc it every time!
+      // todo: in_transformed some cases, we don't need to calc coordinates, but do that in_transformed the for loops!
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
         if (y_shifted < 0 || y_shifted >= height) continue;
@@ -268,7 +271,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
         {
           if (x_shifted < 0 || x_shifted >= width) continue;
           int index_at_xy = index_at_y + x;
-          float difference = in[index_at_xy] - in[index_at_y_shifted + x_shifted];
+          float difference = in_transformed[index_at_xy] - in_transformed[index_at_y_shifted + x_shifted];
           square_differences[index_at_xy] = difference * difference;
         }
       }
@@ -308,7 +311,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           float weight = calculate_weight(distance_patch, h);
           int index_at_xy = index_at_y + x;
           weigths_summed[index_at_xy] += weight;
-          out[index_at_xy] += in[index_at_y_shifted + x_shifted] * weight;
+          out[index_at_xy] += in_transformed[index_at_y_shifted + x_shifted] * weight;
 
         }
       }
@@ -316,7 +319,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   }
 
   // normalize
-  // todo: do coordinate calcs only one time, or better, make it in the for lop head!
+  // todo: do coordinate calcs only one time, or better, make it in_transformed the for lop head!
   for(int y = 0; y < height; y++) {
     int index_at_y = index_coords(0, y, width);
     for (int x = 0; x < width; x++)
@@ -329,13 +332,13 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   // free shared tmp memory:
   // todo: re-enable, but here is a crash!
-//  dt_free_align(in);
+//  dt_free_align(in_transformed);
 //  dt_free_align(square_differences);
 //  dt_free_align(weigths_summed);
 
-  // reverse anscombe transform and scaling to data space
-  // todo!
-//  backtransform_bayer((float *)ovoid, width, height, aa, bb);
+  // reverse anscombe transform and scaling to data space. out stores float values,
+  // which is transformed and written into uint16 ovoid
+  backtransform_bayer(out, (uint16_t *)ovoid, width, height, aa, bb);
 
   if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
 }
