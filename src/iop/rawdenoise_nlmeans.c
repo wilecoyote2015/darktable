@@ -160,10 +160,13 @@ static inline void backtransform_bayer(float *const buf, const int width, const 
           int index_color = 2 * color_y + color_x;
 
           float value = buf[index_image];
-          float value_tranformed = 1. / 4. * value + 1. / 4. * sqrtf(3. / 2.) / value - 11. / 8. * 1.0 / (value * value)
-          + 5. / 8. * sqrtf(3. / 2.) * 1.0 / (value * value * value) - 1. / 8.;
-
-          buf[index_image] = a[index_color] * value_tranformed + b[index_color];
+          if (value > 0) {
+            float value_tranformed = 1. / 4. * value + 1. / 4. * sqrtf(3. / 2.) / value - 11. / 8. * 1.0 / (value * value)
+                                     + 5. / 8. * sqrtf(3. / 2.) * 1.0 / (value * value * value) - 1. / 8.;
+            buf[index_image] = a[index_color] * value_tranformed + b[index_color];
+          } else {
+            buf[index_image] = b[index_color];
+          }
         }
       }
     }
@@ -178,6 +181,10 @@ static inline int index_coords(const int x, const int y, const int width)
 void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
                    void *const ovoid, const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
+
+  // todo: the input and output are now uint16! Modify the code accordingly!
+  // todo: handle divisions by zero, also in anscombe transforms!
+
   // this is called for preview and full pipe separately, each with its own pixelpipe piece.
   // get our data struct:
   const struct dt_iop_rawdenoise_nlmeans_params_t *const d = (const dt_iop_rawdenoise_nlmeans_params_t *const)piece->data;
@@ -190,8 +197,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
   // todo: there should be given by profile
-  const float aa[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-  const float bb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
+  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
 
   const int size_raw_pattern = 2; // todo: derive from sensor type
 
