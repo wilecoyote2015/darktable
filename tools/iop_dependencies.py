@@ -57,6 +57,9 @@ def add_edges(gr):
   # camera input color profile:
   gr.add_edge(('colorin', 'demosaic'))
 
+  # raw denoise happens prior to black- and whitepoint correction or scaling
+  gr.add_edge(('rawprepare', 'rawdenoise_nlmeans'))
+
   # these work on float, rescaled mosaic data:
   gr.add_edge(('demosaic', 'rawprepare'))
 
@@ -66,7 +69,6 @@ def add_edges(gr):
   gr.add_edge(('demosaic', 'highlights'))
   gr.add_edge(('demosaic', 'hotpixels'))
   gr.add_edge(('demosaic', 'rawdenoise'))
-  gr.add_edge(('demosaic', 'rawdenoise_nlmeans'))
   gr.add_edge(('demosaic', 'cacorrect'))
 
   # highlights come directly after whitebalance
