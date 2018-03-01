@@ -136,7 +136,7 @@ static inline void transform_bayer(uint16_t *const input, float *const output, c
           int index_image = (y + color_y) * width + x + color_x;
           int index_color = 2 * color_y + color_x;
 
-          output[index_image] = 2.0f * sqrtf((input[index_image] - b[index_color])/ a[index_color] + 3. / 8.);
+          output[index_image] = 2.0f * sqrtf(((float)input[index_image] - b[index_color])/ a[index_color] + 3.0f / 8.0f);
         }
       }
     }
@@ -161,8 +161,8 @@ static inline void backtransform_bayer(float *const input, uint16_t *const outpu
 
           float value = input[index_image];
           if (value > 0) {
-            float value_tranformed = 1. / 4. * value + 1. / 4. * sqrtf(3. / 2.) / value - 11. / 8. * 1.0 / (value * value)
-                                     + 5. / 8. * sqrtf(3. / 2.) * 1.0 / (value * value * value) - 1. / 8.;
+            float value_tranformed = 1.0f / 4.0f * (value * value) + 1.0f / 4.0f * sqrtf(3.0f / 2.0f) / value - 11.0f / 8.0f * 1.0f / (value * value)
+                                     + 5.0f / 8.0f * sqrtf(3.0f / 2.0f) * 1.0f / (value * value * value) - 1.0f / 8.0f;
             output[index_image] = (uint16_t) (a[index_color] * value_tranformed + b[index_color]);
           } else {
             output[index_image] = (uint16_t) b[index_color];
@@ -197,9 +197,9 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
   // todo: there should be given by profile
-  const float aa[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-//  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
-  const float bb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
+  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
+//  const float bb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
   const int size_raw_pattern = 2; // todo: derive from sensor type
 
@@ -340,7 +340,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   // which is transformed and written into uint16 ovoid
   backtransform_bayer(out, (uint16_t *)ovoid, width, height, aa, bb);
 
-  if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
+//  if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
 }
 
 void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
