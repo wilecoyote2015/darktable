@@ -135,9 +135,13 @@ static inline void transform_anscombe(uint16_t *const input, float *const output
         for (int color_x = 0; color_x < size_raw_pattern; color_x++)
         {
           int index_image = (y + color_y) * width + x + color_x;
-          int index_color = 2 * color_y + color_x;
+          int index_color = size_raw_pattern * color_y + color_x;
 
-          output[index_image] = 2.0f * sqrtf(((float)input[index_image] - b[index_color])/ a[index_color] + 3.0f / 8.0f);
+
+          float term_under_root = ((float)input[index_image] - b[index_color])/ a[index_color] + 3.0f / 8.0f;
+          if (term_under_root >= 0)
+            output[index_image] = 2.0f * sqrtf(term_under_root);
+          else output[index_image] = 0.0f;
         }
       }
     }
@@ -159,7 +163,7 @@ static inline void backtransform_anscombe(float *const input, uint16_t *const ou
         for (int color_x = 0; color_x < size_raw_pattern; color_x++)
         {
           int index_image = (y + color_y) * width + x + color_x;
-          int index_color = 2 * color_y + color_x;
+          int index_color = size_raw_pattern * color_y + color_x;
 
           float value = input[index_image];
           if (value > 0) {
