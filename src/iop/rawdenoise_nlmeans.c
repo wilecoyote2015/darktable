@@ -120,18 +120,19 @@ static float calculate_weight(const float value, const float h)
   return fast_mexp2f(exponent);
 }
 
-static inline void transform_bayer(uint16_t *const input, float *const output, const int width, const int height, const float a[4],
-                                       const float b[4])
+static inline void transform_anscombe(uint16_t *const input, float *const output, const int width, const int height,
+                                      const float *a,
+                                      const float *b, const int size_raw_pattern)
 {
   // transform pixels for each color sepatarely
-  for (int y = 0; y < height; y += 2)
+  for (int y = 0; y < height; y += size_raw_pattern)
   {
-    for (int x = 0; x < width; x += 2)
+    for (int x = 0; x < width; x += size_raw_pattern)
     {
       // todo: take care of orders in elements in a and b according to bayer pattern!
-      for (int color_y = 0; color_y < 2; color_y++)
+      for (int color_y = 0; color_y < size_raw_pattern; color_y++)
       {
-        for (int color_x = 0; color_x < 2; color_x++)
+        for (int color_x = 0; color_x < size_raw_pattern; color_x++)
         {
           int index_image = (y + color_y) * width + x + color_x;
           int index_color = 2 * color_y + color_x;
@@ -143,18 +144,19 @@ static inline void transform_bayer(uint16_t *const input, float *const output, c
   }
 }
 
-static inline void backtransform_bayer(float *const input, uint16_t *const output, const int width, const int height, const float a[4],
-                                 const float b[4])
+static inline void backtransform_anscombe(float *const input, uint16_t *const output, const int width, const int height,
+                                          const float *a,
+                                          const float *b, const int size_raw_pattern)
 {
   // transform pixels for each color sepatarely
-  for (int y = 0; y < height; y += 2)
+  for (int y = 0; y < height; y += size_raw_pattern)
   {
-    for (int x = 0; x < width; x+= 2)
+    for (int x = 0; x < width; x+= size_raw_pattern)
     {
       // todo: take care of orders in elements in a and b according to bayer pattern!
-      for (int color_y = 0; color_y < 2; color_y++)
+      for (int color_y = 0; color_y < size_raw_pattern; color_y++)
       {
-        for (int color_x = 0; color_x < 2; color_x++)
+        for (int color_x = 0; color_x < size_raw_pattern; color_x++)
         {
           int index_image = (y + color_y) * width + x + color_x;
           int index_color = 2 * color_y + color_x;
@@ -197,11 +199,49 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
   // todo: there should be given by profile
-  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
-  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
-//  const float bb[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  // for Nikon D40
+//  const int size_raw_pattern = 2;  // todo: derive from sensor type
+//  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
+//  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
 
-  const int size_raw_pattern = 2; // todo: derive from sensor type
+  // for X-T10 ISO 200
+//  const int size_raw_pattern = 6;  // todo: derive from sensor type
+//  const float aa[36] = {0.39, 0.38, 0.36, 0.38, 0.39, 0.36,
+//                        0.36, 0.36, 0.39, 0.36, 0.36, 0.38,
+//                        0.36, 0.36, 0.38, 0.36, 0.36, 0.39,
+//                        0.38, 0.39, 0.36, 0.39, 0.38, 0.36,
+//                        0.36, 0.36, 0.38, 0.36, 0.36, 0.39,
+//                        0.36, 0.36, 0.39, 0.36, 0.36, 0.38};
+//  const float bb[36] = {1017, 1018, 1011, 1018, 1017, 1011,
+//                        1011, 1011, 1017, 1011, 1011, 1018,
+//                        1011, 1011, 1018, 1011, 1011, 1017,
+//                        1018, 1017, 1011, 1017, 1018, 1011,
+//                        1011, 1011, 1018, 1011, 1011, 1017,
+//                        1011, 1011, 1017, 1011, 1011, 1018};
+
+  // for X-T10 ISO 3200
+  const int size_raw_pattern = 6;  // todo: derive from sensor type
+  const float aa[36] = {3.64, 3.61, 3.68, 3.61, 3.64, 3.68,
+                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61,
+                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
+                        3.61, 3.64, 3.68, 3.64, 3.61, 3.68,
+                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
+                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61};
+  const float bb[36] = {990, 989, 990, 989, 990, 990,
+                        990, 990, 990, 990, 990, 989,
+                        990, 990, 989, 990, 990, 990,
+                        989, 990, 990, 990, 989, 990,
+                        990, 990, 989, 990, 990, 990,
+                        990, 990, 990, 990, 990, 989};
+
+//  [[0 2 1 2 0 1]
+//  [1 1 0 1 1 2]
+//  [1 1 2 1 1 0]
+//  [2 0 1 0 2 1]
+//  [1 1 2 1 1 0]
+//  [1 1 0 1 1 2]]
+
+  // todo: handle all the zero and negative values in the loops, according to what is done in python!
 
   const int width = roi_in->width;
   const int height = roi_in->height;
@@ -232,7 +272,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   float *in_transformed = dt_alloc_align(64, (size_t) sizeof(float) * width * height);
 
   // transform data from uint16 ivoid intp float in_transformed
-  transform_bayer((uint16_t*) ivoid, in_transformed, width, height, aa, bb);
+  transform_anscombe((uint16_t *) ivoid, in_transformed, width, height, aa, bb, size_raw_pattern);
 
 
 //  // because we don't perdfrm anscombe transform yet, simply copy input to in_transformed
@@ -338,7 +378,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   // reverse anscombe transform and scaling to data space. out stores float values,
   // which is transformed and written into uint16 ovoid
-  backtransform_bayer(out, (uint16_t *)ovoid, width, height, aa, bb);
+  backtransform_anscombe(out, (uint16_t *) ovoid, width, height, aa, bb, size_raw_pattern);
 
 //  if(piece->pipe->mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK) dt_iop_alpha_copy(ivoid, ovoid, roi_out->width, roi_out->height);
 }
