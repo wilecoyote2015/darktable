@@ -48,6 +48,7 @@
 #include "common/l10n.h"
 #include "common/mipmap_cache.h"
 #include "common/noiseprofiles.h"
+#include "common/noiseprofiles_raw.h"
 #include "common/opencl.h"
 #include "common/points.h"
 #include "common/resource_limits.h"
@@ -890,6 +891,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
   dt_points_init(darktable.points, dt_get_num_threads());
 
   darktable.noiseprofile_parser = dt_noiseprofile_init(noiseprofiles_from_command);
+  darktable.noiseprofile_parser_raw = dt_noiseprofile_raw_init(noiseprofiles_from_command);
 
   // must come before mipmap_cache, because that one will need to access
   // image dimensions stored in here:
