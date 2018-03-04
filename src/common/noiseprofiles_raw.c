@@ -24,7 +24,20 @@
 // bump this when the noiseprofiles are getting a differen layout or meaning (raw-raw data, ...)
 #define DT_NOISE_PROFILE_VERSION 0
 
-const dt_noiseprofile_raw_t dt_noiseprofile_raw_generic = {N_("generic poissonian"), "", "", 0, {0.0001f, 0.0001f, 0.0001}, {0.0f, 0.0f, 0.0f}};
+
+const dt_noiseprofile_raw_t dt_noiseprofile_raw_generic = {N_("generic poissonian"), "", "", 0,
+                                                           {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+                                                            1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f},
+                                                           {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}};
 
 static gboolean dt_noiseprofile_raw_verify(JsonParser *parser);
 
