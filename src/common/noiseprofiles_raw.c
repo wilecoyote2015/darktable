@@ -38,7 +38,7 @@ JsonParser *dt_noiseprofile_raw_init(const char *alternative)
     // TODO: shall we look for profiles in the user config dir?
     char datadir[PATH_MAX] = { 0 };
     dt_loc_get_datadir(datadir, sizeof(datadir));
-    snprintf(filename, sizeof(filename), "%s/%s", datadir, "noiseprofiles.json");
+    snprintf(filename, sizeof(filename), "%s/%s", datadir, "noiseprofiles_raw.json");
   }
   else
     snprintf(filename, sizeof(filename), "%s", alternative);
