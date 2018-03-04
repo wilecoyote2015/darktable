@@ -192,10 +192,10 @@ static gboolean dt_noiseprofile_raw_verify(JsonParser *parser)
           _ERROR("missing `a`");
         }
         json_reader_read_member(reader, "a");
-        if(json_reader_count_elements(reader) != 3)
+        if(json_reader_count_elements(reader) < 4 || json_reader_count_elements(reader) > 36)
         {
           g_strfreev(member_names);
-          _ERROR("`a` with size != 3");
+          _ERROR("`a` with size < 4 or > 36");
         }
         json_reader_end_member(reader);
 
@@ -206,10 +206,10 @@ static gboolean dt_noiseprofile_raw_verify(JsonParser *parser)
           _ERROR("missing `b`");
         }
         json_reader_read_member(reader, "b");
-        if(json_reader_count_elements(reader) != 3)
+        if(json_reader_count_elements(reader) < 4 || json_reader_count_elements(reader) > 36)
         {
           g_strfreev(member_names);
-          _ERROR("`b` with size != 3");
+          _ERROR("`b` with size < 4 or > 36");
         }
         json_reader_end_member(reader);
 

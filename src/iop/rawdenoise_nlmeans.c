@@ -145,6 +145,7 @@ static float calculate_weight(const float value, const float h)
 static inline void transform_anscombe(uint16_t *const input, float *const output, const int width, const int height,
                                       const float *a,
                                       const float *b, const int size_raw_pattern)
+// todo: here and in backtransform, optimize for loops.
 {
   // transform pixels for each color sepatarely
   for (int y = 0; y < height; y += size_raw_pattern)
@@ -235,14 +236,13 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const float* aa = d->a;
   const float* bb = d->b;
 
-  // todo: there should be given by profile
   // for Nikon D40
-//  const int size_raw_pattern = 2;  // todo: derive from sensor type
+//  const int size_raw_pattern = 2;
 //  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
 //  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
 
 //   for X-T10 ISO 200
-//  const int size_raw_pattern = 6;  // todo: derive from sensor type
+//  const int size_raw_pattern = 6;
 //  const float aa[36] = {0.39, 0.38, 0.36, 0.38, 0.39, 0.36,
 //                        0.36, 0.36, 0.39, 0.36, 0.36, 0.38,
 //                        0.36, 0.36, 0.38, 0.36, 0.36, 0.39,
@@ -257,7 +257,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 //                        1011, 1011, 1017, 1011, 1011, 1018};
 
 //  // for X-T10 ISO 3200
-//  const int size_raw_pattern = 6;  // todo: derive from sensor type
+//  const int size_raw_pattern = 6;
 //  const float aa[36] = {3.64, 3.61, 3.68, 3.61, 3.64, 3.68,
 //                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61,
 //                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
