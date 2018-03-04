@@ -313,9 +313,14 @@ GList *dt_noiseprofile_raw_get_matching(const dt_image_t *cimg)
             tmp_profile.iso = json_reader_get_double_value(reader);
             json_reader_end_member(reader);
 
+            // todo: for a and b, use some try statement to break if end of dataset is reached.
+            // Or better use jsonreader to get the number of elements
+            // this is done now. See if it works. Not sure whether count_elements can count arrays. But should!
+            // todo: handle case that more than length ob b elements are provided.
             // a
             json_reader_read_member(reader, "a");
-            for(int a = 0; a < 3; a++)
+            int n_a = json_reader_count_elements(reader);
+            for(int a = 0; a < n_a; a++)
             {
               json_reader_read_element(reader, a);
               tmp_profile.a[a] = json_reader_get_double_value(reader);
@@ -325,7 +330,8 @@ GList *dt_noiseprofile_raw_get_matching(const dt_image_t *cimg)
 
             // b
             json_reader_read_member(reader, "b");
-            for(int b = 0; b < 3; b++)
+            int n_b = json_reader_count_elements(reader);
+            for(int b = 0; b < n_b; b++)
             {
               json_reader_read_element(reader, b);
               tmp_profile.b[b] = json_reader_get_double_value(reader);
