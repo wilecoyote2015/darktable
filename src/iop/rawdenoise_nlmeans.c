@@ -40,6 +40,16 @@ typedef struct dt_iop_rawdenoise_nlmeans_params_t
   float neighborhood_size;
   float patch_size;
   float h;
+
+  // fit for poissonian-gaussian noise for each sensor filter in the raw pattern.
+  // 36 is maximum possible length, corresponding to x-trans with 6x6 filters.
+  // For Bayer with 2x2 elements, it would thus be the first 4 elements filled.
+  // todo: pointer instead of fixed-size array?
+  float a[36], b[36];
+
+  // width of the quadratic raw pattern. 6 for xtrans, 2 for bayer
+  // todo: needed here? can be determined in function from sensor type
+  int size_raw_pattern;
 } dt_iop_rawdenoise_nlmeans_params_t;
 
 typedef struct dt_iop_rawdenoise_nlmeans_gui_data_t
@@ -49,6 +59,10 @@ typedef struct dt_iop_rawdenoise_nlmeans_gui_data_t
   GtkWidget *neighborhood_size;
   GtkWidget *patch_size;
   GtkWidget *h;
+//
+//  dt_noiseprofile_t interpolated; // don't use name, maker or model, they may point to garbage
+//  GList *profiles;
+
   GtkWidget *label_non_raw;
 } dt_iop_rawdenoise_nlmeans_gui_data_t;
 
@@ -202,13 +216,18 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const float h = d->h;
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
+  // noise profile parameters
+  const int size_raw_pattern = d->size_raw_pattern;
+  const float* aa = d->a;
+  const float* bb = d->b;
+
   // todo: there should be given by profile
   // for Nikon D40
 //  const int size_raw_pattern = 2;  // todo: derive from sensor type
 //  const float aa[4] = {0.9f, 0.9f, 0.9f, 0.9f};
 //  const float bb[4] = {-150.0f, -150.0f, -150.0f, -150.0f};
 
-  // for X-T10 ISO 200
+//   for X-T10 ISO 200
 //  const int size_raw_pattern = 6;  // todo: derive from sensor type
 //  const float aa[36] = {0.39, 0.38, 0.36, 0.38, 0.39, 0.36,
 //                        0.36, 0.36, 0.39, 0.36, 0.36, 0.38,
@@ -223,20 +242,20 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 //                        1011, 1011, 1018, 1011, 1011, 1017,
 //                        1011, 1011, 1017, 1011, 1011, 1018};
 
-  // for X-T10 ISO 3200
-  const int size_raw_pattern = 6;  // todo: derive from sensor type
-  const float aa[36] = {3.64, 3.61, 3.68, 3.61, 3.64, 3.68,
-                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61,
-                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
-                        3.61, 3.64, 3.68, 3.64, 3.61, 3.68,
-                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
-                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61};
-  const float bb[36] = {990, 989, 990, 989, 990, 990,
-                        990, 990, 990, 990, 990, 989,
-                        990, 990, 989, 990, 990, 990,
-                        989, 990, 990, 990, 989, 990,
-                        990, 990, 989, 990, 990, 990,
-                        990, 990, 990, 990, 990, 989};
+//  // for X-T10 ISO 3200
+//  const int size_raw_pattern = 6;  // todo: derive from sensor type
+//  const float aa[36] = {3.64, 3.61, 3.68, 3.61, 3.64, 3.68,
+//                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61,
+//                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
+//                        3.61, 3.64, 3.68, 3.64, 3.61, 3.68,
+//                        3.68, 3.68, 3.61, 3.68, 3.68, 3.64,
+//                        3.68, 3.68, 3.64, 3.68, 3.68, 3.61};
+//  const float bb[36] = {990, 989, 990, 989, 990, 990,
+//                        990, 990, 990, 990, 990, 989,
+//                        990, 990, 989, 990, 990, 990,
+//                        989, 990, 990, 990, 989, 990,
+//                        990, 990, 989, 990, 990, 990,
+//                        990, 990, 990, 990, 990, 989};
 
 //  [[0 2 1 2 0 1]
 //  [1 1 0 1 1 2]
@@ -247,8 +266,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   // todo: handle all the zero and negative values in the loops, according to what is done in python!
 
-  const int width = roi_in->width;
-  const int height = roi_in->height;
+  int width = roi_in->width;
+  int height = roi_in->height;
 
   // get maximum and minimum in_transformed dataset // todo: only for testing!
 //  float minimum = 100.0f, maximum = 0.0f;
