@@ -224,8 +224,14 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   const float h = d->h;
   const int num_pixels_patch = (patch_size * 2 + 1) * (patch_size * 2 + 1);
 
+  int size_raw_pattern;
+  const uint32_t filters = piece->pipe->dsc.filters;
+  if (filters != 9u)
+    size_raw_pattern = 2;
+  else
+    size_raw_pattern = 6;
+
   // noise profile parameters
-  const int size_raw_pattern = d->size_raw_pattern;
   const float* aa = d->a;
   const float* bb = d->b;
 
@@ -444,42 +450,52 @@ void reload_defaults(dt_iop_module_t *module)
   dt_iop_rawdenoise_nlmeans_gui_data_t *g = (dt_iop_rawdenoise_nlmeans_gui_data_t *)module->gui_data;
 
   // get matching profiles:
-  char name[512];
-  if(g->profiles) g_list_free_full(g->profiles, dt_noiseprofile_raw_free);
-  g->profiles = dt_noiseprofile_raw_get_matching(&module->dev->image_storage);
-  g->interpolated = dt_noiseprofile_raw_generic; // default to generic poissonian
-  g_strlcpy(name, _(g->interpolated.name), sizeof(name));
-
-  const int iso = module->dev->image_storage.exif_iso;
-  dt_noiseprofile_raw_t *last = NULL;
-  for(GList *iter = g->profiles; iter; iter = g_list_next(iter))
+  if (g)
   {
-    dt_noiseprofile_raw_t *current = (dt_noiseprofile_raw_t *)iter->data;
+    char name[512];
+    if(g->profiles) g_list_free_full(g->profiles, dt_noiseprofile_raw_free);
+    g->profiles = dt_noiseprofile_raw_get_matching(&module->dev->image_storage);
+    g->interpolated = dt_noiseprofile_raw_generic; // default to generic poissonian
+    g_strlcpy(name, _(g->interpolated.name), sizeof(name));
 
-    if(current->iso == iso)
+    const int iso = module->dev->image_storage.exif_iso;
+    dt_noiseprofile_raw_t *last = NULL;
+    for(GList *iter = g->profiles; iter; iter = g_list_next(iter))
     {
-      g->interpolated = *current;
-      // signal later autodetection in commit_params:
-      g->interpolated.a[0] = -1.0;
-      snprintf(name, sizeof(name), _("found match for ISO %d"), iso);
-      break;
-    }
-    if(last && last->iso < iso && current->iso > iso)
-    {
-      dt_noiseprofile_raw_interpolate(last, current, &g->interpolated);
-      // signal later autodetection in commit_params:
-      g->interpolated.a[0] = -1.0;
-      snprintf(name, sizeof(name), _("interpolated from ISO %d and %d"), last->iso, current->iso);
-      break;
-    }
-    last = current;
-  }
+      dt_noiseprofile_raw_t *current = (dt_noiseprofile_raw_t *)iter->data;
 
-  dt_bauhaus_combobox_add(g->profile, name);
-  for(GList *iter = g->profiles; iter; iter = g_list_next(iter))
-  {
-    dt_noiseprofile_raw_t *profile = (dt_noiseprofile_raw_t *)iter->data;
-    dt_bauhaus_combobox_add(g->profile, profile->name);
+      if(current->iso == iso)
+      {
+        g->interpolated = *current;
+        // signal later autodetection in commit_params:
+        g->interpolated.a[0] = -1.0;
+        snprintf(name, sizeof(name), _("found match for ISO %d"), iso);
+        break;
+      }
+      if(last && last->iso < iso && current->iso > iso)
+      {
+        dt_noiseprofile_raw_interpolate(last, current, &g->interpolated);
+        // signal later autodetection in commit_params:
+        g->interpolated.a[0] = -1.0;
+        snprintf(name, sizeof(name), _("interpolated from ISO %d and %d"), last->iso, current->iso);
+        break;
+      }
+      last = current;
+    }
+
+    dt_bauhaus_combobox_add(g->profile, name);
+    for(GList *iter = g->profiles; iter; iter = g_list_next(iter))
+    {
+      dt_noiseprofile_raw_t *profile = (dt_noiseprofile_raw_t *)iter->data;
+      dt_bauhaus_combobox_add(g->profile, profile->name);
+    }
+
+    for(int k = 0; k < 36; k++)
+    {
+      ((dt_iop_rawdenoise_nlmeans_params_t *)module->default_params)->a[k] = g->interpolated.a[k];
+      ((dt_iop_rawdenoise_nlmeans_params_t *)module->default_params)->b[k] = g->interpolated.b[k];
+    }
+
   }
 
 end:

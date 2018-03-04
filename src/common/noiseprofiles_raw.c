@@ -81,7 +81,7 @@ JsonParser *dt_noiseprofile_raw_init(const char *alternative)
   return parser;
 }
 
-int is_member(gchar** names, char* name)
+int is_member_raw(gchar** names, char* name)
 {
   while(*names)
   {
@@ -172,21 +172,21 @@ static gboolean dt_noiseprofile_raw_verify(JsonParser *parser)
         gchar** member_names = json_reader_list_members(reader);
 
         // name
-        if(!is_member(member_names, "name"))
+        if(!is_member_raw(member_names, "name"))
         {
           g_strfreev(member_names);
           _ERROR("missing `name`");
         }
 
         // iso
-        if(!is_member(member_names, "iso"))
+        if(!is_member_raw(member_names, "iso"))
         {
           g_strfreev(member_names);
           _ERROR("missing `iso`");
         }
 
         // a
-        if(!is_member(member_names, "a"))
+        if(!is_member_raw(member_names, "a"))
         {
           g_strfreev(member_names);
           _ERROR("missing `a`");
@@ -200,7 +200,7 @@ static gboolean dt_noiseprofile_raw_verify(JsonParser *parser)
         json_reader_end_member(reader);
 
         // b
-        if(!is_member(member_names, "b"))
+        if(!is_member_raw(member_names, "b"))
         {
           g_strfreev(member_names);
           _ERROR("missing `b`");
@@ -297,7 +297,7 @@ GList *dt_noiseprofile_raw_get_matching(const dt_image_t *cimg)
             gchar** member_names = json_reader_list_members(reader);
 
             // do we want to skip this entry?
-            if(is_member(member_names, "skip"))
+            if(is_member_raw(member_names, "skip"))
             {
               json_reader_read_member(reader, "skip");
               gboolean skip = json_reader_get_boolean_value(reader);
