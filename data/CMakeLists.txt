@@ -115,8 +115,16 @@ if(${VALIDATE_JSON})
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
     COMMENT "Checking validity of noiseprofiles.json"
   )
+  add_custom_target(
+    validate_noiseprofiles_raw_json ALL
+    COMMAND ${jsonschema_BIN} -i ${CMAKE_CURRENT_SOURCE_DIR}/noiseprofiles_raw.json ${CMAKE_CURRENT_SOURCE_DIR}/noiseprofiles_raw.schema
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/noiseprofiles_raw.json ${CMAKE_CURRENT_SOURCE_DIR}/noiseprofiles_raw.schema
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
+    COMMENT "Checking validity of noiseprofiles_raw.json"
+  )
 endif()
 install(FILES noiseprofiles.json DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/darktable COMPONENT DTApplication)
+install(FILES noiseprofiles_raw.json DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/darktable COMPONENT DTApplication)
 
 #
 # Transform darktableconfig.xml into darktablerc
