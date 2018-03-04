@@ -52,6 +52,7 @@ FILE(GLOB SOURCE_FILES
   "common/mipmap_cache.c"
   "common/module.c"
   "common/noiseprofiles.c"
+  "common/noiseprofiles_raw.c"
   "common/pdf.c"
   "common/styles.c"
   "common/selection.c"
