@@ -388,7 +388,8 @@ void dt_noiseprofile_raw_interpolate(
   const float t = CLAMP(
     (float)(out->iso - p1->iso) / (float)(p2->iso - p1->iso),
                         0.0f, 1.0f);
-  for(int k=0; k<3; k++)
+  // todo: what happens if not all 36 elements are filled?
+  for(int k=0; k<36; k++)
   {
     out->a[k] = (1.0f-t)*p1->a[k] + t*p2->a[k];
     out->b[k] = (1.0f-t)*p1->b[k] + t*p2->b[k];
