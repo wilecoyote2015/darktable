@@ -304,7 +304,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   transform_anscombe((uint16_t *) ivoid, in_transformed, width, height, aa, bb, size_raw_pattern);
 
   // initialize index variables for iteration
-  int index_at_y, index_at_xy, index_at_y_patch, max_y_patch, max_x_patch;
+  int index_at_y, index_at_xy, max_y_patch, max_x_patch;
 
   // for each shift vector
   const int neighborhood_size_scaled = neighborhood_size * size_raw_pattern;
@@ -356,16 +356,20 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           // calculate distance for patch
           float distance_patch = 0.0f;
           max_x_patch = x + patch_size;
-//          int index_patch =
+          int index_patch = (y - patch_size) * width + (x - patch_size);
           for(int y_patch = y - patch_size; y_patch <= max_y_patch; y_patch++)
           {
-            if (y_patch < 0 || y_patch >= height) continue;
-            index_at_y_patch = index_coords(0, y_patch, width);
-            for(int x_patch = x - patch_size; x_patch <= max_x_patch; x_patch++)
+            if (y_patch < 0 || y_patch >= height) {
+              index_patch += width;
+              continue;
+            }
+            for(int x_patch = x - patch_size; x_patch <= max_x_patch; x_patch++, index_patch++)
             {
               if (x_patch < 0 || x_patch >= width) continue;
-              distance_patch += square_differences[index_at_y_patch + x_patch];
+              distance_patch += square_differences[index_patch];
             }
+            // jump to beginning of patch in next row
+            index_patch += width - 2*patch_size;  // todo: shift correct?
           }
 
           // normalize distance by patch size
