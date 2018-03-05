@@ -330,8 +330,6 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
         }
       }
 
-      // todo: On Continue, must it be set += 1?
-
       // for each pixel, calculate the summed quare difference it's patch and the weight from that.
       // add the value of shifted center pixel, multiplied with weight, to the output, and add weight to summed weights
       index = 0;
@@ -344,8 +342,6 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           continue;
         }
 
-//        index_at_y = index_coords(0, y, width);
-//        index_at_y_shifted = index_coords(0, y_shifted, width);
         max_y_patch = y + patch_size;
 
         for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++, index++, index_shifted++)
@@ -387,13 +383,9 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
   // normalize
   // todo: do coordinate calcs only one time, or better, make it in_transformed the for lop head!
-  for(int y = 0; y < height; y++) {
-    index_at_y = index_coords(0, y, width);
-    for (int x = 0; x < width; x++)
-    {
-      index_at_xy = index_at_y + x;
-      out[index_at_xy] /= weigths_summed[index_at_xy];
-    }
+  const int num_pixels = width * height;
+  for(int index = 0; index < num_pixels; index++) {
+      out[index] /= weigths_summed[index];
   }
 
 
