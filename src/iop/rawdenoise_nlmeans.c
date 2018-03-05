@@ -304,7 +304,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
   transform_anscombe((uint16_t *) ivoid, in_transformed, width, height, aa, bb, size_raw_pattern);
 
   // initialize index variables for iteration
-  int index_at_y, index_at_y_shifted, index_at_xy, index_at_y_patch, max_y_patch, max_x_patch;
+  int index_at_y, index_at_xy, index_at_y_patch, max_y_patch, max_x_patch;
 
   // for each shift vector
   const int neighborhood_size_scaled = neighborhood_size * size_raw_pattern;
@@ -313,35 +313,42 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
     for(int shift_x = -neighborhood_size_scaled; shift_x <= neighborhood_size_scaled; shift_x += size_raw_pattern)
     {
       // calculate square differences for current shift
-      // todo: in_transformed all the for-loops, swap x and y loops maybe, and pre-calculate x*width. We don't want to calc it every time!
-      // todo: in_transformed some cases, we don't need to calc coordinates, but do that in_transformed the for loops!
+      int index = 0, index_shifted = shift_y * width + shift_x;
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
-        if (y_shifted < 0 || y_shifted >= height) continue;
+        if (y_shifted < 0 || y_shifted >= height) {
+          index += width;
+          index_shifted += width;
+          continue;
+        }
 
-        index_at_y = index_coords(0, y, width);
-        index_at_y_shifted = index_coords(0, y_shifted, width);
-
-        for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++)
+        for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++, index++, index_shifted++)
         {
           if (x_shifted < 0 || x_shifted >= width) continue;
-          index_at_xy = index_at_y + x;
-          float difference = in_transformed[index_at_xy] - in_transformed[index_at_y_shifted + x_shifted];
-          square_differences[index_at_xy] = difference * difference;
+          float difference = in_transformed[index] - in_transformed[index_shifted];
+          square_differences[index] = difference * difference;
         }
       }
 
+      // todo: On Continue, must it be set += 1?
+
       // for each pixel, calculate the summed quare difference it's patch and the weight from that.
       // add the value of shifted center pixel, multiplied with weight, to the output, and add weight to summed weights
+      index = 0;
+      index_shifted = shift_y * width + shift_x;
       for(int y = 0, y_shifted = shift_y; y < height; y++, y_shifted++)
       {
-        if (y_shifted < 0 || y_shifted >= height) continue;
+        if (y_shifted < 0 || y_shifted >= height) {
+          index += width;
+          index_shifted += width;
+          continue;
+        }
 
-        index_at_y = index_coords(0, y, width);
-        index_at_y_shifted = index_coords(0, y_shifted, width);
+//        index_at_y = index_coords(0, y, width);
+//        index_at_y_shifted = index_coords(0, y_shifted, width);
         max_y_patch = y + patch_size;
 
-        for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++)
+        for(int x = 0, x_shifted = shift_x; x < width; x++, x_shifted++, index++, index_shifted++)
         {
           if (x_shifted < 0 || x_shifted >= width) continue;
           // shifted indices are shifted patch centers
@@ -349,6 +356,7 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
           // calculate distance for patch
           float distance_patch = 0.0f;
           max_x_patch = x + patch_size;
+//          int index_patch =
           for(int y_patch = y - patch_size; y_patch <= max_y_patch; y_patch++)
           {
             if (y_patch < 0 || y_patch >= height) continue;
@@ -365,9 +373,8 @@ void apply_nlmeans(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, 
 
           // calculate weight
           float weight = calculate_weight(distance_patch, h);
-          index_at_xy = index_at_y + x;
-          weigths_summed[index_at_xy] += weight;
-          out[index_at_xy] += in_transformed[index_at_y_shifted + x_shifted] * weight;
+          weigths_summed[index] += weight;
+          out[index] += in_transformed[index_shifted] * weight;
 
         }
       }
