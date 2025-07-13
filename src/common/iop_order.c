@@ -108,6 +108,7 @@ const dt_iop_order_entry_t legacy_order[] = {
   { {21.9f }, "overlay", 0},
   { {22.0f }, "graduatednd", 0},
   { {23.0f }, "basecurve", 0},
+  { {23.1f }, "basecurvergb", 0},
   { {24.0f }, "bilateral", 0},
   { {25.0f }, "profile_gamma", 0},
   { {26.0f }, "hazeremoval", 0},
@@ -250,6 +251,7 @@ const dt_iop_order_entry_t v30_order[] = {
   { {42.0f }, "rgbcurve", 0},        // really versatile way to edit colour in scene-referred and display-referred workflow
   { {43.0f }, "rgblevels", 0},       // same
   { {44.0f }, "basecurve", 0},       // conversion from scene-referred to display referred, reverse-engineered
+  { {44.1f }, "basecurvergb", 0},    // conversion from scene-referred to display referred, reverse-engineered
                                   //    on camera JPEG default look
   { {45.0f }, "filmic", 0},          // same, but different (parametric) approach
   { {45.3f }, "sigmoid", 0},
@@ -367,6 +369,7 @@ const dt_iop_order_entry_t v50_order[] = {
   { {42.0f }, "rgbcurve", 0},        // really versatile way to edit colour in scene-referred and display-referred workflow
   { {43.0f }, "rgblevels", 0},       // same
   { {44.0f }, "basecurve", 0},       // conversion from scene-referred to display referred, reverse-engineered
+  { {44.1f }, "basecurvergb", 0},    // conversion from scene-referred to display referred, reverse-engineered
                                   //    on camera JPEG default look
   { {45.0f }, "filmic", 0},          // same, but different (parametric) approach
   { {45.3f }, "sigmoid", 0},
@@ -485,6 +488,7 @@ const dt_iop_order_entry_t v30_jpg_order[] = {
                                      // workflow
   { { 43.0f }, "rgblevels", 0 },     // same
   { { 44.0f }, "basecurve", 0 },     // conversion from scene-referred to display referred, reverse-engineered
+  { { 44.1f }, "basecurvergb", 0 },     // conversion from scene-referred to display referred, reverse-engineered
                                      //    on camera JPEG default look
   { { 45.0f }, "filmic", 0 },        // same, but different (parametric) approach
   { { 45.3f }, "sigmoid", 0},
@@ -605,6 +609,7 @@ const dt_iop_order_entry_t v50_jpg_order[] = {
                                      // workflow
   { { 43.0f }, "rgblevels", 0 },     // same
   { { 44.0f }, "basecurve", 0 },     // conversion from scene-referred to display referred, reverse-engineered
+  { { 44.1f }, "basecurvergb", 0 },     // conversion from scene-referred to display referred, reverse-engineered
                                      //    on camera JPEG default look
   { { 45.0f }, "filmic", 0 },        // same, but different (parametric) approach
   { { 45.3f }, "sigmoid", 0},
