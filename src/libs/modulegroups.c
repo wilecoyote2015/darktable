@@ -1549,6 +1549,7 @@ void init_presets(dt_lib_module_t *self)
 
   SMG(C_("modulegroup", "base"), "basic");
   AM("basecurve");
+  AM("basecurvergb");
   AM("crop");
   AM("ashift");
   AM("colisa");
@@ -1677,6 +1678,7 @@ void init_presets(dt_lib_module_t *self)
 
   SMG(C_("modulegroup", "base"), "basic");
   AM("basecurve");
+  AM("basecurvergb");
   AM("toneequal");
   AM("crop");
   AM("ashift");

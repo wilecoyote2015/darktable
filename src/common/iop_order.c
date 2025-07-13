@@ -1182,6 +1182,7 @@ GList *dt_ioppr_get_iop_order_list(const dt_imgid_t imgid,
           _insert_before(iop_order_list, "colorbalance", "diffuse");
           _insert_before(iop_order_list, "nlmeans", "blurs");
           _insert_before(iop_order_list, "filmicrgb", "sigmoid");
+          _insert_before(iop_order_list, "filmicrgb", "basecurvergb");
           _insert_before(iop_order_list, "colorbalancergb", "colorequal");
           _insert_before(iop_order_list, "highlights", "rasterfile");
         }

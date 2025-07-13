@@ -189,7 +189,7 @@ typedef struct dt_iop_basecurvergb_global_data_t
 
 const char *name()
 {
-  return _("base curve");
+  return _("base curve rgb");
 }
 
 const char **description(dt_iop_module_t *self)
