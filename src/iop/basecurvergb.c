@@ -65,6 +65,7 @@ typedef struct dt_iop_basecurvergb_params_t
   int basecurvergb_nodes[3]; // $MIN: 0 $MAX: MAXNODES $DEFAULT: 0
   int basecurvergb_type[3];  // $MIN: 0 $MAX: MONOTONE_HERMITE $DEFAULT: MONOTONE_HERMITE
   float preserve_hue;    // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.0 $DESCRIPTION: "preserve hue after application of base curve"
+  float preserve_highlight_saturation; // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.0 $DESCRIPTION: "preserve highlight saturation after application of base curve"
   float source_white;    // $MIN: -4 $MAX: 4.0 $DEFAULT: 0.0 $DESCRIPTION: "exposure shift before curve is applied"
 } dt_iop_basecurvergb_params_t;
 
@@ -86,6 +87,7 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   GtkBox *hbox;
   GtkDrawingArea *area;
   GtkWidget *preserve_hue;
+  GtkWidget *preserve_highlight_saturation;
   GtkWidget *source_white;
   double mouse_x, mouse_y;
   int selected;
@@ -115,15 +117,15 @@ static const basecurvergb_preset_t basecurvergb_camera_presets[] = {
   // clang-format off
 
   // nikon d750 by Edouard Gomez
-  {"Nikon D750", "NIKON CORPORATION", "NIKON D750", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.018124, 0.026126}, {0.143357, 0.370145}, {0.330116, 0.730507}, {0.457952, 0.853462}, {0.734950, 0.965061}, {0.904758, 0.985699}, {1.000000, 1.000000}}}, {8}, {m}, 1, 1}, 1},
+  {"Nikon D750", "NIKON CORPORATION", "NIKON D750", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.018124, 0.026126}, {0.143357, 0.370145}, {0.330116, 0.730507}, {0.457952, 0.853462}, {0.734950, 0.965061}, {0.904758, 0.985699}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
   // contributed by Stefan Kauerauf
-  {"Nikon D5100", "NIKON CORPORATION", "NIKON D5100", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001113, 0.000506}, {0.002842, 0.001338}, {0.005461, 0.002470}, {0.011381, 0.006099}, {0.013303, 0.007758}, {0.034638, 0.041119}, {0.044441, 0.063882}, {0.070338, 0.139639}, {0.096068, 0.210915}, {0.137693, 0.310295}, {0.206041, 0.432674}, {0.255508, 0.504447}, {0.302770, 0.569576}, {0.425625, 0.726755}, {0.554526, 0.839541}, {0.621216, 0.882839}, {0.702662, 0.927072}, {0.897426, 0.990984}, {1.000000, 1.000000}}}, {20}, {m}, 1, 1}, 1},
+  {"Nikon D5100", "NIKON CORPORATION", "NIKON D5100", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001113, 0.000506}, {0.002842, 0.001338}, {0.005461, 0.002470}, {0.011381, 0.006099}, {0.013303, 0.007758}, {0.034638, 0.041119}, {0.044441, 0.063882}, {0.070338, 0.139639}, {0.096068, 0.210915}, {0.137693, 0.310295}, {0.206041, 0.432674}, {0.255508, 0.504447}, {0.302770, 0.569576}, {0.425625, 0.726755}, {0.554526, 0.839541}, {0.621216, 0.882839}, {0.702662, 0.927072}, {0.897426, 0.990984}, {1.000000, 1.000000}}}, {20}, {m}, 1, 0, 0}, 1},
   // nikon d7000 by Edouard Gomez
-  {"Nikon D7000", "NIKON CORPORATION", "NIKON D7000", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001943, 0.003040}, {0.019814, 0.028810}, {0.080784, 0.210476}, {0.145700, 0.383873}, {0.295961, 0.654041}, {0.651915, 0.952819}, {1.000000, 1.000000}}}, {8}, {m}, 1, 1}, 1},
+  {"Nikon D7000", "NIKON CORPORATION", "NIKON D7000", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001943, 0.003040}, {0.019814, 0.028810}, {0.080784, 0.210476}, {0.145700, 0.383873}, {0.295961, 0.654041}, {0.651915, 0.952819}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
   // nikon d7200 standard by Ralf Brown (firmware 1.00)
-  {"Nikon D7200", "NIKON CORPORATION", "NIKON D7200", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001604, 0.001334}, {0.007401, 0.005237}, {0.009474, 0.006890}, {0.017348, 0.017176}, {0.032782, 0.044336}, {0.048033, 0.086548}, {0.075803, 0.168331}, {0.109539, 0.273539}, {0.137373, 0.364645}, {0.231651, 0.597511}, {0.323797, 0.736475}, {0.383796, 0.805797}, {0.462284, 0.872247}, {0.549844, 0.918328}, {0.678855, 0.962361}, {0.817445, 0.990406}, {1.000000, 1.000000}}}, {18}, {m}, 1, 1}, 1},
+  {"Nikon D7200", "NIKON CORPORATION", "NIKON D7200", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001604, 0.001334}, {0.007401, 0.005237}, {0.009474, 0.006890}, {0.017348, 0.017176}, {0.032782, 0.044336}, {0.048033, 0.086548}, {0.075803, 0.168331}, {0.109539, 0.273539}, {0.137373, 0.364645}, {0.231651, 0.597511}, {0.323797, 0.736475}, {0.383796, 0.805797}, {0.462284, 0.872247}, {0.549844, 0.918328}, {0.678855, 0.962361}, {0.817445, 0.990406}, {1.000000, 1.000000}}}, {18}, {m}, 1, 0, 0}, 1},
   // nikon d7500 by Anders Bennehag (firmware C 1.00, LD 2.016)
-  {"NIKON D7500", "NIKON CORPORATION", "NIKON D7500", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.000892, 0.001062}, {0.002280, 0.001768}, {0.013983, 0.011368}, {0.032597, 0.044700}, {0.050065, 0.097131}, {0.084129, 0.219954}, {0.120975, 0.336806}, {0.170730, 0.473752}, {0.258677, 0.647113}, {0.409997, 0.827417}, {0.499979, 0.889468}, {0.615564, 0.941960}, {0.665272, 0.957736}, {0.832126, 0.991968}, {1.000000, 1.000000}}}, {16}, {m}, 1, 1}, 1},
+  {"NIKON D7500", "NIKON CORPORATION", "NIKON D7500", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.000892, 0.001062}, {0.002280, 0.001768}, {0.013983, 0.011368}, {0.032597, 0.044700}, {0.050065, 0.097131}, {0.084129, 0.219954}, {0.120975, 0.336806}, {0.170730, 0.473752}, {0.258677, 0.647113}, {0.409997, 0.827417}, {0.499979, 0.889468}, {0.615564, 0.941960}, {0.665272, 0.957736}, {0.832126, 0.991968}, {1.000000, 1.000000}}}, {16}, {m}, 1, 0, 0}, 1},
   // sony rx100m2 by Günther R.
   { "Sony DSC-RX100M2", "SONY", "DSC-RX100M2", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.015106, 0.008116 }, { 0.070077, 0.093725 }, { 0.107484, 0.170723 }, { 0.191528, 0.341093 }, { 0.257996, 0.458453 }, { 0.305381, 0.537267 }, { 0.326367, 0.569257 }, { 0.448067, 0.723742 }, { 0.509627, 0.777966 }, { 0.676751, 0.898797 }, { 1.000000, 1.000000 } } }, { 12 }, { m }, 1}, 1 },
   // contributed by matthias bodenbinder
@@ -136,13 +138,13 @@ static const basecurvergb_preset_t basecurvergb_camera_presets[] = {
   // contributed by chrik5
   { "Pentax K-5", "Pentax", "Pentax K-5", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.004754, 0.002208 }, { 0.009529, 0.004214 }, { 0.023713, 0.013508 }, { 0.031866, 0.020352 }, { 0.046734, 0.034063 }, { 0.059989, 0.052413 }, { 0.088415, 0.096030 }, { 0.136610, 0.190629 }, { 0.174480, 0.256484 }, { 0.205192, 0.307430 }, { 0.228896, 0.348447 }, { 0.286411, 0.428680 }, { 0.355314, 0.513527 }, { 0.440014, 0.607651 }, { 0.567096, 0.732791 }, { 0.620597, 0.775968 }, { 0.760355, 0.881828 }, { 0.875139, 0.960682 }, { 1.000000, 1.000000 } } }, { 20 }, { m }, 1}, 1 },
   // contributed by Togan Muftuoglu - ed: slope is too aggressive on shadows
-  //{ "Nikon D90", "NIKON", "D90", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.015520, 0.012248 }, { 0.097950, 0.251013 }, { 0.301515, 0.621951 }, { 0.415513, 0.771384 }, { 0.547326, 0.843079 }, { 0.819769, 0.956678 }, { 1.000000, 1.000000 } } }, { 8 }, { m }, 1, 1 }, 0, 1 },
+  //{ "Nikon D90", "NIKON", "D90", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.015520, 0.012248 }, { 0.097950, 0.251013 }, { 0.301515, 0.621951 }, { 0.415513, 0.771384 }, { 0.547326, 0.843079 }, { 0.819769, 0.956678 }, { 1.000000, 1.000000 } } }, { 8 }, { m }, 1, 0, 0 }, 0, 1 },
   // contributed by Edouard Gomez
-  {"Nikon D90", "NIKON CORPORATION", "NIKON D90", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.011702, 0.012659}, {0.122918, 0.289973}, {0.153642, 0.342731}, {0.246855, 0.510114}, {0.448958, 0.733820}, {0.666759, 0.894290}, {1.000000, 1.000000}}}, {8}, {m}, 1, 1}, 1},
+  {"Nikon D90", "NIKON CORPORATION", "NIKON D90", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.011702, 0.012659}, {0.122918, 0.289973}, {0.153642, 0.342731}, {0.246855, 0.510114}, {0.448958, 0.733820}, {0.666759, 0.894290}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
   // contributed by Pascal Obry
   { "Nikon D800", "NIKON", "NIKON D800", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.001773, 0.001936 }, { 0.009671, 0.009693 }, { 0.016754, 0.020617 }, { 0.024884, 0.037309 }, { 0.048174, 0.107768 }, { 0.056932, 0.139532 }, { 0.085504, 0.233303 }, { 0.130378, 0.349747 }, { 0.155476, 0.405445 }, { 0.175245, 0.445918 }, { 0.217657, 0.516873 }, { 0.308475, 0.668608 }, { 0.375381, 0.754058 }, { 0.459858, 0.839909 }, { 0.509567, 0.881543 }, { 0.654394, 0.960877 }, { 0.783380, 0.999161 }, { 0.859310, 1.000000 }, { 1.000000, 1.000000 } } }, { 20 }, { m }, 1}, 1 },
   // contributed by Lukas Schrangl
-  {"Olympus OM-D E-M10 II", "OLYMPUS CORPORATION    ", "E-M10MarkII     ", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.005707, 0.004764}, {0.018944, 0.024456}, {0.054501, 0.129992}, {0.075665, 0.211873}, {0.119641, 0.365771}, {0.173148, 0.532024}, {0.247979, 0.668989}, {0.357597, 0.780138}, {0.459003, 0.839829}, {0.626844, 0.904426}, {0.769425, 0.948541}, {0.820429, 0.964715}, {1.000000, 1.000000}}}, {14}, {m}, 1, 1}, 1},
+  {"Olympus OM-D E-M10 II", "OLYMPUS CORPORATION    ", "E-M10MarkII     ", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.005707, 0.004764}, {0.018944, 0.024456}, {0.054501, 0.129992}, {0.075665, 0.211873}, {0.119641, 0.365771}, {0.173148, 0.532024}, {0.247979, 0.668989}, {0.357597, 0.780138}, {0.459003, 0.839829}, {0.626844, 0.904426}, {0.769425, 0.948541}, {0.820429, 0.964715}, {1.000000, 1.000000}}}, {14}, {m}, 1, 0, 0}, 1},
   // clang-format on
 };
 static const int basecurvergb_camera_presets_cnt = sizeof(basecurvergb_camera_presets) / sizeof(basecurvergb_preset_t);
@@ -151,23 +153,23 @@ static const basecurvergb_preset_t basecurvergb_presets[] = {
   // clang-format off
   // smoother cubic spline curve
   { N_("cubic spline"),             "", "",                      0, FLT_MAX, { { { { 0.0, 0.0 }, { 1.0, 1.0 }, { 0.0, 0.0 }, { 0.0, 0.0 }, { 0.0, 0.0 }, { 0.0, 0.0 } , { 0.0, 0.0}, { 0.0, 0.0} } }            , { 2 }, { CUBIC_SPLINE } }, 0 },
-  { N_("neutral"),                  "", "",                      0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.005000, 0.002500 }, { 0.150000, 0.300000 }, { 0.400000, 0.700000 }, { 0.750000, 0.950000 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 1 },
-  { N_("canon eos like"),           "Canon", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.028226, 0.029677 }, { 0.120968, 0.232258 }, { 0.459677, 0.747581 }, { 0.858871, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("canon eos like alternate"), "Canon", "EOS 5D Mark%",     0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.026210, 0.029677 }, { 0.108871, 0.232258 }, { 0.350806, 0.747581 }, { 0.669355, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("nikon like"),               "NIKON", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036290, 0.036532 }, { 0.120968, 0.228226 }, { 0.459677, 0.759678 }, { 0.858871, 0.983468 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("nikon like alternate"),     "NIKON", "%D____%",          0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.012097, 0.007322 }, { 0.072581, 0.130742 }, { 0.310484, 0.729291 }, { 0.611321, 0.951613 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("sony alpha like"),          "SONY", "",                  0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.031949, 0.036532 }, { 0.105431, 0.228226 }, { 0.434505, 0.759678 }, { 0.855738, 0.983468 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("pentax like"),              "PENTAX", "",                0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.032258, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("ricoh like"),               "RICOH", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.032259, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("olympus like"),             "OLYMPUS", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.033962, 0.028226 }, { 0.249057, 0.439516 }, { 0.501887, 0.798387 }, { 0.750943, 0.955645 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("olympus like alternate"),   "OLYMPUS", "E-M%",           0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.012097, 0.010322 }, { 0.072581, 0.167742 }, { 0.310484, 0.711291 }, { 0.645161, 0.956855 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("panasonic like"),           "Panasonic", "",             0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036290, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("leica like"),               "Leica", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036291, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("kodak easyshare like"),     "EASTMAN KODAK COMPANY", "", 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.044355, 0.020967 }, { 0.133065, 0.154322 }, { 0.209677, 0.300301 }, { 0.572581, 0.753477 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("konica minolta like"),      "MINOLTA", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.020161, 0.010322 }, { 0.112903, 0.167742 }, { 0.500000, 0.711291 }, { 0.899194, 0.956855 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("samsung like"),             "SAMSUNG", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.040323, 0.029677 }, { 0.133065, 0.232258 }, { 0.447581, 0.747581 }, { 0.842742, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("fujifilm like"),            "FUJIFILM", "",              0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.028226, 0.029677 }, { 0.104839, 0.232258 }, { 0.387097, 0.747581 }, { 0.754032, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
-  { N_("nokia like"),               "Nokia", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.041825, 0.020161 }, { 0.117871, 0.153226 }, { 0.319392, 0.500000 }, { 0.638783, 0.842742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 1 }, 0 },
+  { N_("neutral"),                  "", "",                      0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.005000, 0.002500 }, { 0.150000, 0.300000 }, { 0.400000, 0.700000 }, { 0.750000, 0.950000 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 1 },
+  { N_("canon eos like"),           "Canon", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.028226, 0.029677 }, { 0.120968, 0.232258 }, { 0.459677, 0.747581 }, { 0.858871, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("canon eos like alternate"), "Canon", "EOS 5D Mark%",     0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.026210, 0.029677 }, { 0.108871, 0.232258 }, { 0.350806, 0.747581 }, { 0.669355, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("nikon like"),               "NIKON", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036290, 0.036532 }, { 0.120968, 0.228226 }, { 0.459677, 0.759678 }, { 0.858871, 0.983468 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("nikon like alternate"),     "NIKON", "%D____%",          0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.012097, 0.007322 }, { 0.072581, 0.130742 }, { 0.310484, 0.729291 }, { 0.611321, 0.951613 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("sony alpha like"),          "SONY", "",                  0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.031949, 0.036532 }, { 0.105431, 0.228226 }, { 0.434505, 0.759678 }, { 0.855738, 0.983468 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("pentax like"),              "PENTAX", "",                0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.032258, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("ricoh like"),               "RICOH", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.032259, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("olympus like"),             "OLYMPUS", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.033962, 0.028226 }, { 0.249057, 0.439516 }, { 0.501887, 0.798387 }, { 0.750943, 0.955645 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("olympus like alternate"),   "OLYMPUS", "E-M%",           0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.012097, 0.010322 }, { 0.072581, 0.167742 }, { 0.310484, 0.711291 }, { 0.645161, 0.956855 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("panasonic like"),           "Panasonic", "",             0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036290, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("leica like"),               "Leica", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.036291, 0.024596 }, { 0.120968, 0.166419 }, { 0.205645, 0.328527 }, { 0.604839, 0.790171 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("kodak easyshare like"),     "EASTMAN KODAK COMPANY", "", 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.044355, 0.020967 }, { 0.133065, 0.154322 }, { 0.209677, 0.300301 }, { 0.572581, 0.753477 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("konica minolta like"),      "MINOLTA", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.020161, 0.010322 }, { 0.112903, 0.167742 }, { 0.500000, 0.711291 }, { 0.899194, 0.956855 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("samsung like"),             "SAMSUNG", "",               0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.040323, 0.029677 }, { 0.133065, 0.232258 }, { 0.447581, 0.747581 }, { 0.842742, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("fujifilm like"),            "FUJIFILM", "",              0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.028226, 0.029677 }, { 0.104839, 0.232258 }, { 0.387097, 0.747581 }, { 0.754032, 0.967742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
+  { N_("nokia like"),               "Nokia", "",                 0, FLT_MAX, { { { { 0.0, 0.0 }, { 0.041825, 0.020161 }, { 0.117871, 0.153226 }, { 0.319392, 0.500000 }, { 0.638783, 0.842742 }, { 1.000000, 1.000000 } } }, { 6 }, { m }, 1, 0, 0 }, 0 },
   // clang-format on
 };
 #undef m
@@ -181,6 +183,7 @@ typedef struct dt_iop_basecurvergb_data_t
   float table[0x10000];      // precomputed look-up table for tone curve
   float unbounded_coeffs[3]; // approximation for extrapolation
   float preserve_hue;
+  float preserve_highlight_saturation;
   float source_white;
 } dt_iop_basecurvergb_data_t;
 
@@ -346,6 +349,7 @@ void reload_defaults(dt_iop_module_t *self)
     // set to neutral (cubic-spline) for all other instances
     *d = basecurvergb_presets[0].params;
     d->preserve_hue = 1.0f;
+    d->preserve_highlight_saturation = 0.0f;
     d->source_white = 0.0f;
   }
 }
@@ -429,8 +433,8 @@ void process(dt_iop_module_t *self,
   // TODO: I assume that working profile matrix is conversion to XYZ_D50, so that adaption to D65 is needed. Correct?
   dt_colormatrix_t XYZ_D65_to_working_profile = { { 0.0f } };
   dt_colormatrix_t working_profile_to_XYZ_D65 = { { 0.0f } };
-  dt_colormatrix_mul(XYZ_D65_to_working_profile, XYZ_D50_to_D65_CAT16, work_profile->matrix_in);
-  dt_colormatrix_mul(working_profile_to_XYZ_D65, work_profile->matrix_out, XYZ_D65_to_D50_CAT16);
+  dt_colormatrix_mul(working_profile_to_XYZ_D65, XYZ_D50_to_D65_CAT16, work_profile->matrix_in);
+  dt_colormatrix_mul(XYZ_D65_to_working_profile, work_profile->matrix_out, XYZ_D65_to_D50_CAT16);
 
   // make the transposed matrices
   dt_colormatrix_t XYZ_D65_to_working_profile_transposed;
@@ -457,8 +461,10 @@ void process(dt_iop_module_t *self,
     // TODO: apply preserve_hue here
     dt_aligned_pixel_t RGB_in;
     dt_aligned_pixel_t RGB_out;
+    dt_aligned_pixel_t RGB_out_before_hue_preservation;
     copy_pixel(RGB_in, in + k);
     copy_pixel(RGB_out, out + k);
+    copy_pixel(RGB_out_before_hue_preservation, out + k);
 
     dt_aligned_pixel_t XYZ_D65_in;
     dt_aligned_pixel_t XYZ_D65_out;
@@ -468,11 +474,12 @@ void process(dt_iop_module_t *self,
     // to jab (todo: later we will use oklab for preserve_hue)
     dt_aligned_pixel_t jab_in;
     dt_aligned_pixel_t jab_out;
-    dt_XYZ_2_JzAzBz(XYZ_D65_in, jab_in);
-    dt_XYZ_2_JzAzBz(XYZ_D65_out, jab_out);
+    dt_XYZ_D65_to_oklab(XYZ_D65_in, jab_in);
+    dt_XYZ_D65_to_oklab(XYZ_D65_out, jab_out);
 
     dt_aligned_pixel_t jch_in;
     dt_aligned_pixel_t jch_out;
+    // dt_JzAzBz_2_JzCzhz is general JAB to JCH conversion and can be used
     dt_JzAzBz_2_JzCzhz(jab_in, jch_in);
     dt_JzAzBz_2_JzCzhz(jab_out, jch_out);
 
@@ -481,13 +488,54 @@ void process(dt_iop_module_t *self,
 
     // convert back to working profile
     dt_JzCzhz_2_JzAzBz(jch_out, jab_out);
-    dt_JzAzBz_2_XYZ(jab_out, XYZ_D65_out);
+    dt_oklab_to_XYZ_D65(jab_out, XYZ_D65_out);
 
     // convert back to RGB
     dt_apply_transposed_color_matrix(XYZ_D65_out, XYZ_D65_to_working_profile_transposed, RGB_out);
+
+    // TODO: recover lightness after highlight saturation preservation
+    // by comparing lightness before and after saturation preservation
+    // dt_aligned_pixel_t HSL_out_before_hue_preservation;
+    // dt_aligned_pixel_t HSL_out_after_hue_preservation;
+    // dt_RGB_2_HSV(RGB_out_before_hue_preservation, HSL_out_before_hue_preservation);
+    // dt_RGB_2_HSV(RGB_out, HSL_out_after_hue_preservation);
+    // const float L_before = HSL_out_before_hue_preservation[2];
+    // // const float L_after = HSL_out_after_hue_preservation[1];
+    // HSL_out_after_hue_preservation[2] = L_before * 3;
+    // dt_HSV_2_RGB(HSL_out_after_hue_preservation, RGB_out);
+
+
+    // do saturation preservation
+    const float min = fminf(RGB_out[0], fminf(RGB_out[1], RGB_out[2]));
+    const float max = fmaxf(RGB_out[0], fmaxf(RGB_out[1], RGB_out[2]));
+    const float delta = max - min;
+
+    const float L = (min + max) / 2.0f;
+    float C;
+
+    if(fabsf(max) > 1e-6f && fabsf(delta) > 1e-6f)
+    {
+      C = delta;
+    }
+    else
+    {
+      C = 0.0f;
+    }
+    const float factor_resaturation = sqrtf(L * C) * d->preserve_highlight_saturation;
+
+    dt_aligned_pixel_t HSV_out;
+    dt_aligned_pixel_t HSV_in;
+    dt_RGB_2_HSV(RGB_in, HSV_in);
+    dt_RGB_2_HSV(RGB_out, HSV_out);
+    HSV_out[1] = HSV_in[1] * factor_resaturation + (1.0f - factor_resaturation) * HSV_out[1];
+    dt_HSV_2_RGB(HSV_out, RGB_out);
+
     out[k+0] = RGB_out[0];
     out[k+1] = RGB_out[1];
-    out[k+2] = RGB_out[2];
+    out[k+2] = RGB_out[2];    
+    // out[k+0] = factor_resaturation;
+    // out[k+1] = factor_resaturation;
+    // out[k+2] = factor_resaturation;
     out[k+3] = in[k+3];
 
 
@@ -515,6 +563,7 @@ void commit_params(dt_iop_module_t *self,
   dt_iop_basecurvergb_params_t *p = (dt_iop_basecurvergb_params_t *)p1;
 
   d->preserve_hue = p->preserve_hue;
+  d->preserve_highlight_saturation = p->preserve_highlight_saturation;
   d->source_white = p->source_white;
 
   const int ch = 0;
@@ -1214,6 +1263,13 @@ void gui_init(dt_iop_module_t *self)
   gtk_widget_set_tooltip_text(g->preserve_hue, _("The strength of hue preservation after application of base curve"));
   gtk_widget_set_no_show_all(g->preserve_hue, TRUE);
   gtk_widget_set_visible(g->preserve_hue, CL_TRUE);
+
+  g->preserve_highlight_saturation = dt_bauhaus_slider_from_params(self, "preserve_highlight_saturation");
+  dt_bauhaus_slider_set_default(g->preserve_highlight_saturation, 0.0f);
+  dt_bauhaus_slider_set_digits(g->preserve_highlight_saturation, 3);
+  gtk_widget_set_tooltip_text(g->preserve_highlight_saturation, _("The strength of hue preservation after application of base curve"));
+  gtk_widget_set_no_show_all(g->preserve_highlight_saturation, TRUE);
+  gtk_widget_set_visible(g->preserve_highlight_saturation, CL_TRUE);
 
   g->source_white = dt_bauhaus_slider_from_params(self, "source_white");
   dt_bauhaus_slider_set_default(g->source_white, 1.0f);
