@@ -18,6 +18,7 @@
 
 #include "bauhaus/bauhaus.h"
 #include "common/colorspaces_inline_conversions.h"
+#include "common/chromatic_adaptation.h"
 #include "common/debug.h"
 #include "common/imagebuf.h"
 #include "common/math.h"
@@ -397,68 +398,19 @@ void tiling_callback(dt_iop_module_t *self,
 }
 #endif
 
-// See comments of opencl version in data/kernels/basecurve.cl for description of the meaning of "legacy"
-static inline void apply_curve(
-    const float *const in,
-    float *const out,
-    const int width,
-    const int height,
-    const float mul,
-    const float *const table,
-    const float *const unbounded_coeffs)
+void process(dt_iop_module_t *self,
+             dt_dev_pixelpipe_iop_t *piece,
+             const void *const ivoid,
+             void *const ovoid,
+             const dt_iop_roi_t *const roi_in,
+             const dt_iop_roi_t *const roi_out)
 {
-  // TODO: scale to user-defined max value and clip
-  const size_t npixels = (size_t)width * height;
-  DT_OMP_FOR()
-  for(size_t k = 0; k < 4*npixels; k += 4)
-  {
-    for(int i = 0; i < 3; i++)
-    {
-      const float f = in[k+i] * mul;
-      // use base curve for values < 1, else use extrapolation.
-      if(f < 1.0f)
-        out[k+i] = fmaxf(table[CLAMP((int)(f * 0x10000ul), 0, 0xffff)], 0.f);
-      else
-        out[k+i] = fmaxf(dt_iop_eval_exp(unbounded_coeffs, f), 0.f);
-    }
-    out[k+3] = in[k+3];
-  }
-}
 
-static inline void compute_features(
-    float *const col,
-    const int wd,
-    const int ht)
-{
-  // features are product of
-  // 1) well exposedness
-  // 2) saturation
-  // 3) local contrast (handled in laplacian form later)
-  const size_t npixels = (size_t)wd * ht;
-  DT_OMP_FOR()
-  for(size_t x = 0; x < 4*npixels; x += 4)
-  {
-    const float max = MAX(col[x], MAX(col[x+1], col[x+2]));
-    const float min = MIN(col[x], MIN(col[x+1], col[x+2]));
-    const float sat = .1f + .1f*(max-min)/MAX(1e-4f, max);
+  const dt_iop_order_iccprofile_info_t *const work_profile
+      = dt_ioppr_get_pipe_current_profile_info(self, piece->pipe);
+  if(work_profile == NULL) return; // cannot continue without a working profile
 
-    const float c = 0.54f;
-    float v = fabsf(col[x]-c);
-    v = MAX(fabsf(col[x+1]-c), v);
-    v = MAX(fabsf(col[x+2]-c), v);
-    const float var = 0.5;
-    const float exp = .2f + dt_fast_expf(-v*v/(var*var));
-    col[x+3] = sat * exp;
-  }
-}
 
-void process_lut(dt_iop_module_t *self,
-                 dt_dev_pixelpipe_iop_t *piece,
-                 const void *const ivoid,
-                 void *const ovoid,
-                 const dt_iop_roi_t *const roi_in,
-                 const dt_iop_roi_t *const roi_out)
-{
   const float *const in = (const float *)ivoid;
   float *const out = (float *)ovoid;
   //const int ch = piece->colors; <-- it appears someone was trying to make this handle monochrome data,
@@ -470,18 +422,88 @@ void process_lut(dt_iop_module_t *self,
 
   const int wd = roi_in->width, ht = roi_in->height;
   const float factor_source_white = powf(2.0f, d->source_white);
-  apply_curve(in, out, wd, ht, factor_source_white, d->table, d->unbounded_coeffs);
-}
+  const float preserve_hue = d->preserve_hue;
 
 
-void process(dt_iop_module_t *self,
-             dt_dev_pixelpipe_iop_t *piece,
-             const void *const ivoid,
-             void *const ovoid,
-             const dt_iop_roi_t *const roi_in,
-             const dt_iop_roi_t *const roi_out)
-{
-  process_lut(self, piece, ivoid, ovoid, roi_in, roi_out);
+  // get matrix for working profile to XYZ_D65 conversion
+  // TODO: I assume that working profile matrix is conversion to XYZ_D50, so that adaption to D65 is needed. Correct?
+  dt_colormatrix_t XYZ_D65_to_working_profile = { { 0.0f } };
+  dt_colormatrix_t working_profile_to_XYZ_D65 = { { 0.0f } };
+  dt_colormatrix_mul(XYZ_D65_to_working_profile, XYZ_D50_to_D65_CAT16, work_profile->matrix_in);
+  dt_colormatrix_mul(working_profile_to_XYZ_D65, work_profile->matrix_out, XYZ_D65_to_D50_CAT16);
+
+  // make the transposed matrices
+  dt_colormatrix_t XYZ_D65_to_working_profile_transposed;
+  dt_colormatrix_t working_profile_to_XYZ_D65_transposed;
+  dt_colormatrix_transpose(XYZ_D65_to_working_profile_transposed, XYZ_D65_to_working_profile);
+  dt_colormatrix_transpose(working_profile_to_XYZ_D65_transposed, working_profile_to_XYZ_D65);
+
+
+  // TODO: scale to user-defined max value and clip
+  const size_t npixels = (size_t)wd * ht;
+  DT_OMP_FOR()
+  for(size_t k = 0; k < 4*npixels; k += 4)
+  {
+    for(int i = 0; i < 3; i++)
+    {
+      const float in_multiplied = in[k+i] * factor_source_white;
+      // use base curve for values < 1, else use extrapolation.
+      if(in_multiplied < 1.0f)
+        out[k+i] = fmaxf(d->table[CLAMP((int)(in_multiplied * 0x10000ul), 0, 0xffff)], 0.f);
+      else
+        out[k+i] = fmaxf(dt_iop_eval_exp(d->unbounded_coeffs, in_multiplied), 0.f);
+    }
+
+    // TODO: apply preserve_hue here
+    dt_aligned_pixel_t RGB_in;
+    dt_aligned_pixel_t RGB_out;
+    copy_pixel(RGB_in, in + k);
+    copy_pixel(RGB_out, out + k);
+
+    dt_aligned_pixel_t XYZ_D65_in;
+    dt_aligned_pixel_t XYZ_D65_out;
+    dt_apply_transposed_color_matrix(RGB_in, working_profile_to_XYZ_D65_transposed, XYZ_D65_in);
+    dt_apply_transposed_color_matrix(RGB_out, working_profile_to_XYZ_D65_transposed, XYZ_D65_out);
+
+    // to jab (todo: later we will use oklab for preserve_hue)
+    dt_aligned_pixel_t jab_in;
+    dt_aligned_pixel_t jab_out;
+    dt_XYZ_2_JzAzBz(XYZ_D65_in, jab_in);
+    dt_XYZ_2_JzAzBz(XYZ_D65_out, jab_out);
+
+    dt_aligned_pixel_t jch_in;
+    dt_aligned_pixel_t jch_out;
+    dt_JzAzBz_2_JzCzhz(jab_in, jch_in);
+    dt_JzAzBz_2_JzCzhz(jab_out, jch_out);
+
+    // insert hue from in to out
+    jch_out[2] = preserve_hue * jch_in[2] + (1.0f - preserve_hue) * jch_out[2];
+
+    // convert back to working profile
+    dt_JzCzhz_2_JzAzBz(jch_out, jab_out);
+    dt_JzAzBz_2_XYZ(jab_out, XYZ_D65_out);
+
+    // convert back to RGB
+    dt_apply_transposed_color_matrix(XYZ_D65_out, XYZ_D65_to_working_profile_transposed, RGB_out);
+    out[k+0] = RGB_out[0];
+    out[k+1] = RGB_out[1];
+    out[k+2] = RGB_out[2];
+    out[k+3] = in[k+3];
+
+
+    // TODO: see colorbalancergb on how to get work profile
+    // like   dt_colormatrix_mul(output_matrix, XYZ_D50_to_D65_CAT16, work_profile->matrix_in); // output_matrix used as temp buffer
+    // and then to get the color matrix etc. for converting from work profile to XYZ_D65, which is needed for oklab conversion
+
+    // Convert in and out to oklab
+
+    // copy hue from in to out
+
+    // Convert back to RGB
+
+
+    // TODO: apply preserve_hue here
+  }
 }
 
 void commit_params(dt_iop_module_t *self,
