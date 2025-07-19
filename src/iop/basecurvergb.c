@@ -594,18 +594,54 @@ static gboolean dt_iop_basecurvergb_leave_notify(GtkWidget *widget,
   return FALSE;
 }
 
+/**
+ * Applies log scaling to input value x based on the base parameter.
+ * 
+ * @param x Input value in range [0, 1]
+ * @param base Scaling base:
+ *             > 0: Spreads shadows (left side) - larger values compress more towards highlights
+ *             < 0: Spreads highlights (right side) - larger absolute values compress more towards shadows  
+ *             = 0: Linear mapping (no transformation)
+ * @return Transformed value in range [0, 1]
+ */
 static float to_log(const float x, const float base)
 {
   if(base > 0.0f)
     return logf(x * base + 1.0f) / logf(base + 1.0f);
+  else if(base < 0.0f)
+  {
+    // For negative base values, spread highlights by applying log transform to (1-x) 
+    // and then mirroring the result around 0.5
+    const float abs_base = -base;
+    const float flipped_x = 1.0f - x;
+    const float log_result = logf(flipped_x * abs_base + 1.0f) / logf(abs_base + 1.0f);
+    return 1.0f - log_result;
+  }
   else
     return x;
 }
 
+/**
+ * Applies the inverse of log scaling - converts from log-scaled space back to linear.
+ * This is the mathematical inverse of to_log() function.
+ * 
+ * @param x Input value in log-scaled space [0, 1]  
+ * @param base Same base parameter used in corresponding to_log() call
+ * @return Linear value in range [0, 1]
+ */
 static float to_lin(const float x, const float base)
 {
   if(base > 0.0f)
-    return (powf(base - 1.0f, x) - 1.0f) / base;
+    return (powf(base + 1.0f, x) - 1.0f) / base;
+  else if(base < 0.0f)
+  {
+    // Inverse transformation for negative base values
+    // Mirror x around 0.5, apply inverse log transform, then mirror back
+    const float abs_base = -base;
+    const float flipped_x = 1.0f - x;
+    const float linear_result = (powf(abs_base + 1.0f, flipped_x) - 1.0f) / abs_base;
+    return 1.0f - linear_result;
+  }
   else
     return x;
 }
@@ -707,8 +743,27 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
   // draw grid
   cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(.4));
   cairo_set_source_rgb(cr, .1, .1, .1);
-  if(g->loglogscale)
-    dt_draw_loglog_grid(cr, 4, 0, 0, width, height, g->loglogscale + 1.0f);
+  if(g->loglogscale != 0.0f)
+  {
+    // Custom grid drawing that matches our to_log function behavior
+    const int num = 4;
+    for(int k = 1; k < num; k++)
+    {
+      const float grid_pos = k / (float)num;
+      const float x = to_log(grid_pos, g->loglogscale);
+      const float y = to_log(grid_pos, g->loglogscale);
+      
+      // Vertical lines
+      cairo_move_to(cr, x * width, 0);
+      cairo_line_to(cr, x * width, height);
+      cairo_stroke(cr);
+      
+      // Horizontal lines  
+      cairo_move_to(cr, 0, y * height);
+      cairo_line_to(cr, width, y * height);
+      cairo_stroke(cr);
+    }
+  }
   else
     dt_draw_grid(cr, 4, 0, 0, width, height);
 
@@ -1145,7 +1200,7 @@ void gui_init(dt_iop_module_t *self)
   gtk_widget_set_no_show_all(g->source_white, TRUE);
   gtk_widget_set_visible(g->source_white, CL_TRUE);
 
-  g->logbase = dt_bauhaus_slider_new_with_range(self, 0.0f, 40.0f, 0, 0.0f, 2);
+  g->logbase = dt_bauhaus_slider_new_with_range(self, -40.0f, 40.0f, 0, 0.0f, 2);
   dt_bauhaus_widget_set_label(g->logbase, NULL, N_("scale for graph"));
   g_signal_connect(G_OBJECT(g->logbase), "value-changed", G_CALLBACK(logbase_callback), self);
   dt_gui_box_add(self->widget, g->logbase);
