@@ -1252,21 +1252,69 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
   cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(2.));
   cairo_set_source_rgb(cr, .9, .9, .9);
   // cairo_set_line_cap  (cr, CAIRO_LINE_CAP_SQUARE);
-  cairo_move_to(cr, 0, height * to_log(g->draw_ys[0], g->loglogscale));
-  for(int k = 1; k < DT_IOP_TONECURVE_RES; k++)
+  
+  // Smart curve sampling: sample uniformly in display space (log space) when loglogscale is active
+  // This ensures adequate resolution everywhere in the log-scaled view
+  const gboolean use_log_sampling = (g->loglogscale != 0.0f);
+  
+  if(use_log_sampling)
   {
-    const float xx = k / (DT_IOP_TONECURVE_RES - 1.0f);
-    if(xx > xm)
+    // Sample uniformly in log-space for better resolution
+    cairo_move_to(cr, 0, height * to_log(g->draw_ys[0], g->loglogscale));
+    
+    for(int k = 1; k < DT_IOP_TONECURVE_RES; k++)
     {
-      const float yy = dt_iop_eval_exp(unbounded_coeffs, xx);
+      // Sample uniformly in log-display space
+      const float x_log_uniform = k / (DT_IOP_TONECURVE_RES - 1.0f);
+      
+      // Convert back to linear space to evaluate the curve
+      const float xx = to_lin(x_log_uniform, g->loglogscale);
+      
+      float yy;
+      if(xx > xm)
+      {
+        yy = dt_iop_eval_exp(unbounded_coeffs, xx);
+      }
+      else
+      {
+        // Interpolate from pre-calculated curve values
+        const float curve_pos = xx * (DT_IOP_TONECURVE_RES - 1.0f);
+        const int idx = (int)curve_pos;
+        const float frac = curve_pos - idx;
+        
+        if(idx >= DT_IOP_TONECURVE_RES - 1)
+        {
+          yy = g->draw_ys[DT_IOP_TONECURVE_RES - 1];
+        }
+        else
+        {
+          yy = g->draw_ys[idx] * (1.0f - frac) + g->draw_ys[idx + 1] * frac;
+        }
+      }
+      
+      // Convert to log space for display
       const float x = to_log(xx, g->loglogscale), y = to_log(yy, g->loglogscale);
       cairo_line_to(cr, x * width, height * y);
     }
-    else
+  }
+  else
+  {
+    // Standard linear sampling when no log scaling is active
+    cairo_move_to(cr, 0, height * g->draw_ys[0]);
+    
+    for(int k = 1; k < DT_IOP_TONECURVE_RES; k++)
     {
-      const float yy = g->draw_ys[k];
-      const float x = to_log(xx, g->loglogscale), y = to_log(yy, g->loglogscale);
-      cairo_line_to(cr, x * width, height * y);
+      const float xx = k / (DT_IOP_TONECURVE_RES - 1.0f);
+      if(xx > xm)
+      {
+        const float yy = dt_iop_eval_exp(unbounded_coeffs, xx);
+        cairo_line_to(cr, xx * width, height * yy);
+      }
+      else
+      {
+        const float yy = g->draw_ys[k];
+        cairo_line_to(cr, xx * width, height * yy);
+      }
     }
   }
   cairo_stroke(cr);
