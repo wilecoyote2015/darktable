@@ -105,6 +105,7 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   uint32_t custom_histogram_max_temp[3]; // Temporary max values during calculation
   gboolean custom_histogram_valid;      // TRUE if histogram is up to date
   float last_exposure_compensation;     // Last exposure compensation value used
+  float last_loglogscale;               // Last loglogscale value used for histogram display
   
   // Thumbnail buffer for efficient histogram calculation (similar to toneequal)
   float *thumb_buffer;                  // RGB thumbnail data with exposure applied
@@ -599,6 +600,8 @@ static inline void calculate_histogram_from_thumb(dt_iop_basecurvergb_gui_data_t
   #undef HIST_SIZE
 }
 
+
+
 /**
  * Update histogram for GUI preview when needed.
  * This function handles all histogram-related calculations for the preview pipeline,
@@ -628,13 +631,16 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
   // Check if recalculation is needed with debug output
   const gboolean exposure_changed = (isnan(g->last_exposure_compensation) || 
                                     fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
+  const gboolean logscale_changed = (isnan(g->last_loglogscale) ||
+                                    fabsf(g->last_loglogscale - g->loglogscale) > 1e-6f);
   const gboolean histogram_invalid = !g->custom_histogram_valid;
   const gboolean thumb_invalid = !g->thumb_valid;
   
-  if(exposure_changed || histogram_invalid || thumb_invalid)
+  if(exposure_changed || logscale_changed || histogram_invalid || thumb_invalid)
   {
-    fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f\n",
-            exposure_changed, histogram_invalid, thumb_invalid, d->pre_curve_exposure_compensation);
+    fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, logscale_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f, log=%.3f\n",
+            exposure_changed, logscale_changed, histogram_invalid, thumb_invalid, 
+            d->pre_curve_exposure_compensation, g->loglogscale);
     
     // Allocate histogram buffers if needed (double-buffered for thread safety)
     if(!g->custom_histogram)
@@ -681,6 +687,7 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
       
       g->custom_histogram_valid = TRUE;
       g->last_exposure_compensation = d->pre_curve_exposure_compensation;
+      g->last_loglogscale = g->loglogscale;
       
       // Trigger GUI redraw with lower priority than image processing
       if(self->widget) 
@@ -1128,16 +1135,61 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
       
       // Draw all RGB channels with additive blending
       cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
-      for(int k = 0; k < 3; k++)  // RGB channels (0=R, 1=G, 2=B)
+      
+      // Apply log scaling to histogram x-coordinates if loglogscale is active
+      const gboolean use_log_scaling = (g && g->loglogscale != 0.0f);
+      
+      if(use_log_scaling)
       {
-        set_color(cr, darktable.bauhaus->graph_colors[k]);
+        // Custom drawing with log-scaled x-coordinates
+        for(int k = 0; k < 3; k++)  // RGB channels (0=R, 1=G, 2=B)
+        {
+          set_color(cr, darktable.bauhaus->graph_colors[k]);
+          
+          cairo_move_to(cr, 0, 0);
+          
+          // Draw histogram with log-scaled x-coordinates
+          for(int i = 0; i < 256; i++)
+          {
+            const float x_linear = (float)i / 255.0f;  // Linear bin position [0,1]
+            const float x_log = to_log(x_linear, g->loglogscale);  // Use existing to_log function
+            const float x_display = x_log * 255.0f;  // Scale back to [0,255] for cairo
+            
+            // Get histogram value for this bin
+            const uint32_t bin_value = hist[k * 256 + i];
+            float y_value = (float)bin_value;
+            
+            if(!is_linear && bin_value > 0)
+              y_value = logf(1.0f + (float)bin_value);
+            
+            if(i == 0)
+              cairo_move_to(cr, x_display, 0);
+            
+            cairo_line_to(cr, x_display, y_value);
+          }
+          
+          // Close the path and fill
+          cairo_line_to(cr, 255.0f, 0);
+          cairo_close_path(cr);
+          cairo_fill(cr);
+        }
         
-        // Custom histogram data is stored as [R0..R255, G0..G255, B0..B255]
-        dt_draw_histogram_8_zoomed(cr, hist + k * 256, 1, 0,  // offset to channel start, stride=1, channel=0
-                                   1.0f,   // zoom_factor (no zoom for simplified version)
-                                   0.0f,   // offset_x (no offset)
-                                   0.0f,   // offset_y (no offset)
-                                   is_linear);  // use histogram's linear setting
+        fprintf(stderr, "[basecurve] Drew histogram with log scaling: %.3f (using to_log function)\n", g->loglogscale);
+      }
+      else
+      {
+        // Standard linear drawing
+        for(int k = 0; k < 3; k++)  // RGB channels (0=R, 1=G, 2=B)
+        {
+          set_color(cr, darktable.bauhaus->graph_colors[k]);
+          
+          // Custom histogram data is stored as [R0..R255, G0..G255, B0..B255]
+          dt_draw_histogram_8_zoomed(cr, hist + k * 256, 1, 0,  // offset to channel start, stride=1, channel=0
+                                     1.0f,   // zoom_factor (no zoom for simplified version)
+                                     0.0f,   // offset_x (no offset)
+                                     0.0f,   // offset_y (no offset)
+                                     is_linear);  // use histogram's linear setting
+        }
       }
       
       cairo_pop_group_to_source(cr);
@@ -1583,7 +1635,22 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
 {
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
+  if(!g) return;
+  
+  const float old_loglogscale = g->loglogscale;
   g->loglogscale = eval_grey(dt_bauhaus_slider_get(g->logbase));
+  
+  // Invalidate histogram cache when loglogscale changes for correct display scaling
+  if(fabsf(old_loglogscale - g->loglogscale) > 1e-6f)
+  {
+    dt_iop_gui_enter_critical_section(self);
+    g->custom_histogram_valid = FALSE;
+    dt_iop_gui_leave_critical_section(self);
+    
+    fprintf(stderr, "[basecurve] Log scale changed: %.3f -> %.3f, invalidated histogram cache\n",
+            old_loglogscale, g->loglogscale);
+  }
+  
   gtk_widget_queue_draw(GTK_WIDGET(g->area));
 }
 
@@ -1598,6 +1665,7 @@ void change_image(dt_iop_module_t *self)
     g->custom_histogram_valid = FALSE;
     g->thumb_valid = FALSE;
     g->last_exposure_compensation = NAN;  // Force recalculation
+    g->last_loglogscale = NAN;            // Force recalculation
     
     // Reset UI state
     g->mouse_x = g->mouse_y = -1.0;
@@ -1628,6 +1696,7 @@ void gui_init(dt_iop_module_t *self)
   g->custom_histogram_temp = NULL;
   g->custom_histogram_valid = FALSE;
   g->last_exposure_compensation = NAN;  // Force initial calculation
+  g->last_loglogscale = NAN;            // Force initial calculation
   memset(g->custom_histogram_max, 0, sizeof(g->custom_histogram_max));
   memset(g->custom_histogram_max_temp, 0, sizeof(g->custom_histogram_max_temp));
   
