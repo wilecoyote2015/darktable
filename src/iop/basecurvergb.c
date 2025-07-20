@@ -412,7 +412,7 @@ void tiling_callback(dt_iop_module_t *self,
 #endif
 
 // Calculate RGB histogram after exposure compensation (for GUI display)
-static void _calculate_custom_histogram(const float *const restrict in,
+static inline void calculate_custom_histogram(const float *const restrict in,
                                        const int width,
                                        const int height,
                                        const float exposure_compensation,
@@ -494,7 +494,7 @@ void process(dt_iop_module_t *self,
       if(g->custom_histogram && g->custom_histogram_temp)
       {
         // Calculate histogram into temporary buffer (avoids race conditions)
-        _calculate_custom_histogram(in, wd, ht, d->pre_curve_exposure_compensation,
+        calculate_custom_histogram(in, wd, ht, d->pre_curve_exposure_compensation,
                                    g->custom_histogram_temp, g->custom_histogram_max_temp);
         
         // Atomically swap buffers and update metadata
