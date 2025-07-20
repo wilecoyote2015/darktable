@@ -99,13 +99,13 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   GtkWidget *logbase;
   
   // Custom histogram after exposure compensation (double-buffered for thread safety)
+  // TODO: is this the best / canonic approach in DT?
   uint32_t *custom_histogram;           // Current display histogram (3 channels x 256 bins)
   uint32_t *custom_histogram_temp;      // Temporary calculation buffer
   uint32_t custom_histogram_max[3];     // Maximum counts per channel for display
   uint32_t custom_histogram_max_temp[3]; // Temporary max values during calculation
   gboolean custom_histogram_valid;      // TRUE if histogram is up to date
   float last_exposure_compensation;     // Last exposure compensation value used
-  dt_hash_t last_input_hash;            // Hash of last input data processed
 } dt_iop_basecurvergb_gui_data_t;
 
 typedef struct basecurvergb_preset_t
@@ -475,18 +475,14 @@ void process(dt_iop_module_t *self,
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
   if(g && self->dev->gui_attached && (piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
   {
-    // Calculate hash of input parameters to detect changes
-    const dt_hash_t input_hash = dt_dev_hash_plus(self->dev, piece->pipe,
-                                                  self->iop_order, DT_DEV_TRANSFORM_DIR_BACK_EXCL);
-    
     dt_iop_gui_enter_critical_section(self);
     
-    // Check if we need to recalculate histogram
-    const gboolean params_changed = (isnan(g->last_exposure_compensation) || 
-                                    fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
-    const gboolean input_changed = (g->last_input_hash != input_hash);
+    // Only recalculate histogram when exposure compensation changes
+    // (curve changes don't affect histogram since it shows data BEFORE curve application)
+    const gboolean needs_recalc = (isnan(g->last_exposure_compensation) || 
+                                  fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
     
-    if(!g->custom_histogram_valid || params_changed || input_changed)
+    if(!g->custom_histogram_valid || needs_recalc)
     {
       // Allocate histogram buffers if needed (double-buffered)
       if(!g->custom_histogram)
@@ -509,7 +505,6 @@ void process(dt_iop_module_t *self,
         
         g->custom_histogram_valid = TRUE;
         g->last_exposure_compensation = d->pre_curve_exposure_compensation;
-        g->last_input_hash = input_hash;
         
         // Trigger GUI redraw
         if(self->widget) dt_control_queue_redraw_widget(self->widget);
@@ -1394,7 +1389,6 @@ void gui_init(dt_iop_module_t *self)
   g->custom_histogram_temp = NULL;
   g->custom_histogram_valid = FALSE;
   g->last_exposure_compensation = NAN;  // Force initial calculation
-  g->last_input_hash = DT_INVALID_HASH;
   memset(g->custom_histogram_max, 0, sizeof(g->custom_histogram_max));
   memset(g->custom_histogram_max_temp, 0, sizeof(g->custom_histogram_max_temp));
 
