@@ -97,6 +97,13 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   float draw_max_xs[DT_IOP_TONECURVE_RES], draw_max_ys[DT_IOP_TONECURVE_RES];
   float loglogscale;
   GtkWidget *logbase;
+  
+  // Custom histogram after exposure compensation
+  uint32_t *custom_histogram;           // RGB histogram bins (3 channels x 256 bins)
+  uint32_t custom_histogram_max[3];     // Maximum counts per channel  
+  gboolean custom_histogram_valid;      // TRUE if histogram is up to date
+  float last_exposure_compensation;     // Last exposure compensation value used
+  dt_hash_t last_input_hash;            // Hash of last input data processed
 } dt_iop_basecurvergb_gui_data_t;
 
 typedef struct basecurvergb_preset_t
@@ -402,6 +409,43 @@ void tiling_callback(dt_iop_module_t *self,
 }
 #endif
 
+// Calculate RGB histogram after exposure compensation (for GUI display)
+static void _calculate_custom_histogram(const float *const restrict in,
+                                       const int width,
+                                       const int height,
+                                       const float exposure_compensation,
+                                       uint32_t *const restrict histogram,
+                                       uint32_t *const restrict histogram_max)
+{
+  // Initialize histogram (256 bins per RGB channel)
+  memset(histogram, 0, 3 * 256 * sizeof(uint32_t));
+  memset(histogram_max, 0, 3 * sizeof(uint32_t));
+  
+  const float exp_factor = exp2f(exposure_compensation);
+  const size_t num_pixels = (size_t)width * height;
+  
+  // Calculate histogram for RGB channels after exposure compensation
+  // Values are clamped to [0,1] range to show clipping
+  for(size_t i = 0; i < num_pixels; i++)
+  {
+    const float *pixel = in + i * 4;
+    
+    for(int c = 0; c < 3; c++)  // RGB channels only
+    {
+      // Apply exposure compensation
+      float val = pixel[c] * exp_factor;
+      
+      // Clamp to [0,1] and convert to bin index
+      val = CLAMP(val, 0.0f, 1.0f);
+      const int bin = (int)(val * 255.0f);
+      const int hist_idx = c * 256 + bin;
+      
+      histogram[hist_idx]++;
+      histogram_max[c] = MAX(histogram_max[c], histogram[hist_idx]);
+    }
+  }
+}
+
 void process(dt_iop_module_t *self,
              dt_dev_pixelpipe_iop_t *piece,
              const void *const ivoid,
@@ -424,6 +468,47 @@ void process(dt_iop_module_t *self,
   const int wd = roi_in->width, ht = roi_in->height;
   const float factor_pre_curve_exposure_compensation = powf(2.0f, d->pre_curve_exposure_compensation);
   const float preserve_hue = d->preserve_hue;
+  
+  // Calculate custom histogram for GUI (preview pipeline only)
+  dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
+  if(g && self->dev->gui_attached && (piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
+  {
+    // Calculate hash of input parameters to detect changes
+    const dt_hash_t input_hash = dt_dev_hash_plus(self->dev, piece->pipe,
+                                                  self->iop_order, DT_DEV_TRANSFORM_DIR_BACK_EXCL);
+    
+    dt_iop_gui_enter_critical_section(self);
+    
+    // Check if we need to recalculate histogram
+    const gboolean params_changed = (isnan(g->last_exposure_compensation) || 
+                                    fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
+    const gboolean input_changed = (g->last_input_hash != input_hash);
+    
+    if(!g->custom_histogram_valid || params_changed || input_changed)
+    {
+      // Allocate histogram buffer if needed
+      if(!g->custom_histogram)
+      {
+        g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+      }
+      
+      if(g->custom_histogram)
+      {
+        // Calculate histogram after exposure compensation
+        _calculate_custom_histogram(in, wd, ht, d->pre_curve_exposure_compensation,
+                                   g->custom_histogram, g->custom_histogram_max);
+        
+        g->custom_histogram_valid = TRUE;
+        g->last_exposure_compensation = d->pre_curve_exposure_compensation;
+        g->last_input_hash = input_hash;
+        
+        // Trigger GUI redraw
+        if(self->widget) dt_control_queue_redraw_widget(self->widget);
+      }
+    }
+    
+    dt_iop_gui_leave_critical_section(self);
+  }
 
   // get matrix for working profile to XYZ_D65 conversion to prepare for the other conversions
   dt_colormatrix_t XYZ_D65_to_working_profile = { { 0.0f } };
@@ -804,19 +889,25 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
   // This must be drawn BEFORE the cairo_scale Y-flip to match rgbcurve.c coordinate system
   if(self->enabled)
   {
-    const uint32_t *hist = self->histogram;
-    const gboolean is_linear = darktable.lib->proxy.histogram.is_linear;
+    // Use custom histogram after exposure compensation (only show if valid to avoid flickering)
+    const uint32_t *hist = NULL;
+    uint32_t hist_max_values[3] = {0, 0, 0};
     float hist_max = 0.0f;
+    const gboolean is_linear = darktable.lib->proxy.histogram.is_linear;
     
-    if(hist)
+    // Only use our custom histogram if it's valid (no fallback to avoid flickering)
+    if(g && g->custom_histogram_valid && g->custom_histogram)
     {
+      hist = g->custom_histogram;
+      memcpy(hist_max_values, g->custom_histogram_max, sizeof(hist_max_values));
+      
       // Calculate maximum across all RGB channels
       for(int k = 0; k < 3; k++)
-        hist_max = fmaxf(hist_max, self->histogram_max[k]);
-      
-      if(!is_linear)
-        hist_max = logf(1.0f + hist_max);
+        hist_max = fmaxf(hist_max, hist_max_values[k]);
     }
+    
+    if(!is_linear && hist_max > 0.0f)
+      hist_max = logf(1.0f + hist_max);
 
     if(hist && hist_max > 0.0f)
     {
@@ -828,7 +919,9 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
       for(int k = 0; k < 3; k++)  // RGB channels (0=R, 1=G, 2=B)
       {
         set_color(cr, darktable.bauhaus->graph_colors[k]);
-        dt_draw_histogram_8_zoomed(cr, hist, 4, k,
+        
+        // Custom histogram data is stored as [R0..R255, G0..G255, B0..B255]
+        dt_draw_histogram_8_zoomed(cr, hist + k * 256, 1, 0,  // offset to channel start, stride=1, channel=0
                                    1.0f,   // zoom_factor (no zoom for simplified version)
                                    0.0f,   // offset_x (no offset)
                                    0.0f,   // offset_y (no offset)
@@ -1256,6 +1349,14 @@ static gboolean dt_iop_basecurvergb_key_press(GtkWidget *widget,
 
 void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 {
+  // Only invalidate custom histogram when exposure compensation changes
+  dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
+  if(g && w == g->pre_curve_exposure_compensation)
+  {
+    dt_iop_gui_enter_critical_section(self);
+    g->custom_histogram_valid = FALSE;
+    dt_iop_gui_leave_critical_section(self);
+  }
 }
 
 static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
@@ -1278,6 +1379,13 @@ void gui_init(dt_iop_module_t *self)
   g->mouse_x = g->mouse_y = -1.0;
   g->selected = -1;
   g->loglogscale = 0;
+  
+  // Initialize custom histogram fields
+  g->custom_histogram = NULL;
+  g->custom_histogram_valid = FALSE;
+  g->last_exposure_compensation = NAN;  // Force initial calculation
+  g->last_input_hash = DT_INVALID_HASH;
+  memset(g->custom_histogram_max, 0, sizeof(g->custom_histogram_max));
 
   g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_height(0));
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->area), _("abscissa: input, ordinate: output. works on RGB channels"));
@@ -1330,6 +1438,13 @@ void gui_cleanup(dt_iop_module_t *self)
 {
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
   dt_draw_curve_destroy(g->minmax_curve);
+  
+  // Clean up custom histogram buffer
+  if(g->custom_histogram)
+  {
+    dt_free_align(g->custom_histogram);
+    g->custom_histogram = NULL;
+  }
 }
 
 // clang-format off
