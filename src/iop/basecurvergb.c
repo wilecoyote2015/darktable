@@ -444,11 +444,9 @@ void process(dt_iop_module_t *self,
     for(int i = 0; i < 3; i++)
     {
       const float in_multiplied = in[k+i] * factor_source_white;
-      // use base curve for values < 1, else use extrapolation.
-      if(in_multiplied < 1.0f)
-        out[k+i] = fmaxf(d->table[CLAMP((int)(in_multiplied * 0x10000ul), 0, 0xffff)], 0.f);
-      else
-        out[k+i] = fmaxf(dt_iop_eval_exp(d->unbounded_coeffs, in_multiplied), 0.f);
+      // clip to 0-1. User can use the source_white slider to adjust the exposure.
+      const float in_clipped = CLAMP(in_multiplied, 0.0f, 1.0f);
+      out[k+i] = fmaxf(d->table[CLAMP((int)(in_clipped * 0x10000ul), 0, 0xffff)], 0.f);
     }
 
     // TODO: apply preserve_hue here
