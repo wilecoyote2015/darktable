@@ -1263,7 +1263,7 @@ void gui_init(dt_iop_module_t *self)
   gtk_widget_set_visible(g->pre_curve_exposure_compensation, CL_TRUE);
 
   g->logbase = dt_bauhaus_slider_new_with_range(self, -40.0f, 40.0f, 0, 0.0f, 2);
-  dt_bauhaus_widget_set_label(g->logbase, NULL, N_("scale for graph"));
+  dt_bauhaus_widget_set_label(g->logbase, NULL, N_("shadow / highlight graph scaling"));
   g_signal_connect(G_OBJECT(g->logbase), "value-changed", G_CALLBACK(logbase_callback), self);
   dt_gui_box_add(self->widget, g->logbase);
 
