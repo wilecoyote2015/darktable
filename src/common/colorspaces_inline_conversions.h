@@ -1429,6 +1429,73 @@ static inline void dt_UCS_HSB_to_XYZ(const dt_aligned_pixel_t HSB, const float L
   dt_xyY_to_XYZ(xyY, XYZ);
 }
 
+// OKLAB color space conversions
+// Reference: Björn Ottosson - A perceptual color space for image processing
+// https://bottosson.github.io/posts/oklab/
+// OKLAB M1 matrix transposed: XYZ D65 -> LMS (linear)
+static const dt_colormatrix_t oklab_M1_transposed = {
+  { 0.8189330101f, 0.0329845436f, 0.0482003018f, 0.0000000000f },
+  { 0.3618667424f, 0.9293118715f, 0.2643662691f, 0.0000000000f },
+  { -0.1288597137f, 0.0361456387f, 0.6338517070f, 0.0000000000f },
+  { 0.0000000000f, 0.0000000000f, 0.0000000000f, 0.0000000000f }
+};
+
+// OKLAB M2 matrix transposed: LMS^(1/3) -> LAB (linear)
+static const dt_colormatrix_t oklab_M2_transposed = {
+  { 0.2104542553f, 1.9779984951f, 0.0259040371f, 0.0000000000f },
+  { 0.7936177850f, -2.4285922050f, 0.7827717662f, 0.0000000000f },
+  { -0.0040720468f, 0.4505937099f, -0.8086757660f, 0.0000000000f },
+  { 0.0000000000f, 0.0000000000f, 0.0000000000f, 0.0000000000f }
+};
+
+// OKLAB M1 inverse matrix transposed: LMS -> XYZ D65 (linear)
+static const dt_colormatrix_t oklab_M1_inv_transposed = {
+  { 1.2270138511f, -0.0405801784f, -0.0763812845f, 0.0000000000f },
+  { -0.5577999807f, 1.1122568696f, -0.4214819784f, 0.0000000000f },
+  { 0.2812561490f, -0.0716766787f, 1.5861632204f, 0.0000000000f },
+  { 0.0000000000f, 0.0000000000f, 0.0000000000f, 0.0000000000f }
+};
+
+// OKLAB M2 inverse matrix transposed: LAB -> LMS^(1/3) (linear)
+static const dt_colormatrix_t oklab_M2_inv_transposed = {
+  { 0.9999999985f, 1.0000000089f, 1.0000000547f, 0.0000000000f },
+  { 0.3963377922f, -0.1055613423f, -0.0894841821f, 0.0000000000f },
+  { 0.2158037581f, -0.0638541748f, -1.2914855379f, 0.0000000000f },
+  { 0.0000000000f, 0.0000000000f, 0.0000000000f, 0.0000000000f }
+};
+
+DT_OMP_DECLARE_SIMD(aligned(XYZ_D65, oklab: 16))
+static inline void dt_XYZ_D65_to_oklab(const dt_aligned_pixel_t XYZ_D65, dt_aligned_pixel_t oklab)
+{
+  // XYZ D65 -> LMS (linear)
+  dt_aligned_pixel_t lms;
+  dt_apply_transposed_color_matrix(XYZ_D65, oklab_M1_transposed, lms);
+  
+  // Apply cube root to LMS components
+  dt_aligned_pixel_t lms_cbrt;
+  for_each_channel(c)
+    lms_cbrt[c] = cbrtf(fmaxf(lms[c], 0.0f));
+  
+  // LMS^(1/3) -> OKLAB
+  dt_apply_transposed_color_matrix(lms_cbrt, oklab_M2_transposed, oklab);
+}
+
+DT_OMP_DECLARE_SIMD(aligned(oklab, XYZ_D65: 16))
+static inline void dt_oklab_to_XYZ_D65(const dt_aligned_pixel_t oklab, dt_aligned_pixel_t XYZ_D65)
+{
+  // OKLAB -> LMS^(1/3)
+  dt_aligned_pixel_t lms_cbrt;
+  dt_apply_transposed_color_matrix(oklab, oklab_M2_inv_transposed, lms_cbrt);
+  
+  // Apply cube (^3) to get back to LMS
+  dt_aligned_pixel_t lms;
+  for_each_channel(c)
+    lms[c] = lms_cbrt[c] * lms_cbrt[c] * lms_cbrt[c];
+  
+  // LMS -> XYZ D65
+  dt_apply_transposed_color_matrix(lms, oklab_M1_inv_transposed, XYZ_D65);
+}
+
 #undef DT_RESTRICT
 
 // clang-format off
@@ -1436,3 +1503,4 @@ static inline void dt_UCS_HSB_to_XYZ(const dt_aligned_pixel_t HSB, const float L
 // vim: shiftwidth=2 expandtab tabstop=2 cindent
 // kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
 // clang-format on
+
