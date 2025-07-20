@@ -66,7 +66,7 @@ typedef struct dt_iop_basecurvergb_params_t
   int basecurvergb_type[3];  // $MIN: 0 $MAX: MONOTONE_HERMITE $DEFAULT: MONOTONE_HERMITE
   float preserve_hue;    // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.0 $DESCRIPTION: "preserve hue after application of base curve"
   float preserve_highlight_saturation; // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.0 $DESCRIPTION: "preserve highlight saturation after application of base curve"
-  float source_white;    // $MIN: -4 $MAX: 4.0 $DEFAULT: 0.0 $DESCRIPTION: "exposure shift before curve is applied"
+  float pre_curve_exposure_compensation;    // $MIN: -4 $MAX: 4.0 $DEFAULT: 0.0 $DESCRIPTION: "exposure shift before curve is applied"
 } dt_iop_basecurvergb_params_t;
 
 int legacy_params(dt_iop_module_t *self,
@@ -88,7 +88,7 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   GtkDrawingArea *area;
   GtkWidget *preserve_hue;
   GtkWidget *preserve_highlight_saturation;
-  GtkWidget *source_white;
+  GtkWidget *pre_curve_exposure_compensation;
   double mouse_x, mouse_y;
   int selected;
   double selected_offset, selected_y, selected_min, selected_max;
@@ -184,7 +184,7 @@ typedef struct dt_iop_basecurvergb_data_t
   float unbounded_coeffs[3]; // approximation for extrapolation
   float preserve_hue;
   float preserve_highlight_saturation;
-  float source_white;
+  float pre_curve_exposure_compensation;
 } dt_iop_basecurvergb_data_t;
 
 typedef struct dt_iop_basecurvergb_global_data_t
@@ -350,7 +350,7 @@ void reload_defaults(dt_iop_module_t *self)
     *d = basecurvergb_presets[0].params;
     d->preserve_hue = 1.0f;
     d->preserve_highlight_saturation = 0.0f;
-    d->source_white = 0.0f;
+    d->pre_curve_exposure_compensation = 0.0f;
   }
 }
 
@@ -422,7 +422,7 @@ void process(dt_iop_module_t *self,
   dt_iop_basecurvergb_data_t *const d = piece->data;
 
   const int wd = roi_in->width, ht = roi_in->height;
-  const float factor_source_white = powf(2.0f, d->source_white);
+  const float factor_pre_curve_exposure_compensation = powf(2.0f, d->pre_curve_exposure_compensation);
   const float preserve_hue = d->preserve_hue;
 
   // get matrix for working profile to XYZ_D65 conversion to prepare for the other conversions
@@ -443,8 +443,8 @@ void process(dt_iop_module_t *self,
   {
     for(int i = 0; i < 3; i++)
     {
-      const float in_multiplied = in[k+i] * factor_source_white;
-      // clip to 0-1. User can use the source_white slider to adjust the exposure.
+      const float in_multiplied = in[k+i] * factor_pre_curve_exposure_compensation;
+      // clip to 0-1. User can use the pre_curve_exposure_compensation slider to adjust the exposure.
       const float in_clipped = CLAMP(in_multiplied, 0.0f, 1.0f);
       out[k+i] = fmaxf(d->table[CLAMP((int)(in_clipped * 0x10000ul), 0, 0xffff)], 0.f);
     }
@@ -548,7 +548,7 @@ void commit_params(dt_iop_module_t *self,
 
   d->preserve_hue = p->preserve_hue;
   d->preserve_highlight_saturation = p->preserve_highlight_saturation;
-  d->source_white = p->source_white;
+  d->pre_curve_exposure_compensation = p->pre_curve_exposure_compensation;
 
   const int ch = 0;
   // take care of possible change of curve type or number of nodes (not yet implemented in UI)
@@ -1255,12 +1255,12 @@ void gui_init(dt_iop_module_t *self)
   gtk_widget_set_no_show_all(g->preserve_highlight_saturation, TRUE);
   gtk_widget_set_visible(g->preserve_highlight_saturation, CL_TRUE);
 
-  g->source_white = dt_bauhaus_slider_from_params(self, "source_white");
-  dt_bauhaus_slider_set_default(g->source_white, 1.0f);
-  dt_bauhaus_slider_set_digits(g->source_white, 3);
-  gtk_widget_set_tooltip_text(g->source_white, _("Number of ev stops the source white lies over / below 1.0"));
-  gtk_widget_set_no_show_all(g->source_white, TRUE);
-  gtk_widget_set_visible(g->source_white, CL_TRUE);
+  g->pre_curve_exposure_compensation = dt_bauhaus_slider_from_params(self, "pre_curve_exposure_compensation");
+  dt_bauhaus_slider_set_default(g->pre_curve_exposure_compensation, 1.0f);
+  dt_bauhaus_slider_set_digits(g->pre_curve_exposure_compensation, 3);
+  gtk_widget_set_tooltip_text(g->pre_curve_exposure_compensation, _("Number of ev stops the source white lies over / below 1.0"));
+  gtk_widget_set_no_show_all(g->pre_curve_exposure_compensation, TRUE);
+  gtk_widget_set_visible(g->pre_curve_exposure_compensation, CL_TRUE);
 
   g->logbase = dt_bauhaus_slider_new_with_range(self, -40.0f, 40.0f, 0, 0.0f, 2);
   dt_bauhaus_widget_set_label(g->logbase, NULL, N_("scale for graph"));
