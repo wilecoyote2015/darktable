@@ -512,7 +512,9 @@ static inline void update_thumb_buffer(dt_iop_module_t *self,
     g->thumb_height = height;
     g->thumb_valid = FALSE;
     
+    /* DEBUG
     fprintf(stderr, "[basecurve] Reallocated thumb buffer: %dx%d\n", width, height);
+    */
   }
   
   if(!g->thumb_buffer) return;
@@ -638,16 +640,20 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
   
   if(exposure_changed || logscale_changed || histogram_invalid || thumb_invalid)
   {
+    /* DEBUG
     fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, logscale_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f, log=%.3f\n",
             exposure_changed, logscale_changed, histogram_invalid, thumb_invalid, 
             d->pre_curve_exposure_compensation, g->loglogscale);
+    */
     
     // Allocate histogram buffers if needed (double-buffered for thread safety)
     if(!g->custom_histogram)
     {
       g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
       g->custom_histogram_temp = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+      /* DEBUG
       fprintf(stderr, "[basecurve] Allocated histogram buffers\n");
+      */
     }
     
     if(g->custom_histogram && g->custom_histogram_temp)
@@ -661,7 +667,9 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
       {
         // Update thumb buffer with current exposure compensation
         update_thumb_buffer(self, in, wd, ht, d->pre_curve_exposure_compensation);
+        /* DEBUG
         fprintf(stderr, "[basecurve] Updated thumb buffer (%dx%d)\n", wd, ht);
+        */
       }
       
       // Calculate histogram using the most appropriate method
@@ -669,14 +677,18 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
       {
         // Fast path: calculate from cached thumb buffer
         calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
+        /* DEBUG
         fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
+        */
       }
       else
       {
         // Direct calculation for small images or when thumb is unavailable
         calculate_custom_histogram_optimized(in, wd, ht, d->pre_curve_exposure_compensation,
                                            g->custom_histogram_temp, g->custom_histogram_max_temp);
+        /* DEBUG
         fprintf(stderr, "[basecurve] Used direct calculation for histogram\n");
+        */
       }
       
       // Atomically swap buffers and update metadata
@@ -695,8 +707,10 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
         dt_control_queue_redraw_widget(self->widget);
       }
       
+      /* DEBUG
       fprintf(stderr, "[basecurve] Histogram calculation completed, max values: R=%u G=%u B=%u\n",
               g->custom_histogram_max[0], g->custom_histogram_max[1], g->custom_histogram_max[2]);
+      */
     }
   }
   
@@ -1174,7 +1188,9 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
           cairo_fill(cr);
         }
         
+        /* DEBUG
         fprintf(stderr, "[basecurve] Drew histogram with log scaling: %.3f (using to_log function)\n", g->loglogscale);
+        */
       }
       else
       {
@@ -1652,7 +1668,9 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
   {
     g->custom_histogram_valid = FALSE;
     g->thumb_valid = FALSE;  // Force thumb buffer update with new exposure
+    /* DEBUG
     fprintf(stderr, "[basecurve] GUI changed: exposure compensation, invalidated caches\n");
+    */
   }
   
   // Note: Curve changes don't affect histogram since it shows data BEFORE curve application
@@ -1676,8 +1694,10 @@ static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
     g->custom_histogram_valid = FALSE;
     dt_iop_gui_leave_critical_section(self);
     
+    /* DEBUG
     fprintf(stderr, "[basecurve] Log scale changed: %.3f -> %.3f, invalidated histogram cache\n",
             old_loglogscale, g->loglogscale);
+    */
   }
   
   gtk_widget_queue_draw(GTK_WIDGET(g->area));
@@ -1700,7 +1720,9 @@ void change_image(dt_iop_module_t *self)
     g->mouse_x = g->mouse_y = -1.0;
     g->selected = -1;
     
+    /* DEBUG
     fprintf(stderr, "[basecurve] Image changed: invalidated all caches\n");
+    */
     
     dt_iop_gui_leave_critical_section(self);
   }
