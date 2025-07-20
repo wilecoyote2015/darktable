@@ -441,6 +441,7 @@ void process(dt_iop_module_t *self,
   DT_OMP_FOR()
   for(size_t k = 0; k < 4*npixels; k += 4)
   {
+    // first, apply the base curve channel-wise
     for(int i = 0; i < 3; i++)
     {
       const float in_multiplied = in[k+i] * factor_pre_curve_exposure_compensation;
@@ -449,7 +450,8 @@ void process(dt_iop_module_t *self,
       out[k+i] = fmaxf(d->table[CLAMP((int)(in_clipped * 0x10000ul), 0, 0xffff)], 0.f);
     }
 
-    // TODO: apply preserve_hue here
+    // convert into OKHCL space and preserve hue by mixing in 
+    // the hue from the image before curve application
     dt_aligned_pixel_t RGB_in;
     dt_aligned_pixel_t RGB_out;
     dt_aligned_pixel_t RGB_out_before_hue_preservation;
@@ -462,24 +464,23 @@ void process(dt_iop_module_t *self,
     dt_apply_transposed_color_matrix(RGB_in, working_profile_to_XYZ_D65_transposed, XYZ_D65_in);
     dt_apply_transposed_color_matrix(RGB_out, working_profile_to_XYZ_D65_transposed, XYZ_D65_out);
 
-    // to jab (todo: later we will use oklab for preserve_hue)
-    dt_aligned_pixel_t jab_in;
-    dt_aligned_pixel_t jab_out;
-    dt_XYZ_D65_to_oklab(XYZ_D65_in, jab_in);
-    dt_XYZ_D65_to_oklab(XYZ_D65_out, jab_out);
+    dt_aligned_pixel_t oklab_in;
+    dt_aligned_pixel_t oklab_out;
+    dt_XYZ_D65_to_oklab(XYZ_D65_in, oklab_in);
+    dt_XYZ_D65_to_oklab(XYZ_D65_out, oklab_out);
 
     dt_aligned_pixel_t jch_in;
     dt_aligned_pixel_t jch_out;
     // dt_JzAzBz_2_JzCzhz is general JAB to JCH conversion and can be used
-    dt_JzAzBz_2_JzCzhz(jab_in, jch_in);
-    dt_JzAzBz_2_JzCzhz(jab_out, jch_out);
+    dt_JzAzBz_2_JzCzhz(oklab_in, jch_in);
+    dt_JzAzBz_2_JzCzhz(oklab_out, jch_out);
 
-    // insert hue from in to out
+    // insert hue from in to out, weighted by preserve_hue
     jch_out[2] = preserve_hue * jch_in[2] + (1.0f - preserve_hue) * jch_out[2];
 
     // convert back to working profile
-    dt_JzCzhz_2_JzAzBz(jch_out, jab_out);
-    dt_oklab_to_XYZ_D65(jab_out, XYZ_D65_out);
+    dt_JzCzhz_2_JzAzBz(jch_out, oklab_out);
+    dt_oklab_to_XYZ_D65(oklab_out, XYZ_D65_out);
 
     // convert back to RGB
     dt_apply_transposed_color_matrix(XYZ_D65_out, XYZ_D65_to_working_profile_transposed, RGB_out);
@@ -489,7 +490,9 @@ void process(dt_iop_module_t *self,
     // bright non-primary colors.
     // in this case, we should prefer perceived lightness over saturation maybe?
 
-    // do saturation preservation
+    // do saturation preservation:
+    // first, construct a weight for saturation preservation that focuses on highlights 
+    // Chroma and Average rgb norm
     const float min = fminf(RGB_out[0], fminf(RGB_out[1], RGB_out[2]));
     const float max = fmaxf(RGB_out[0], fmaxf(RGB_out[1], RGB_out[2]));
     const float delta = max - min;
@@ -517,24 +520,7 @@ void process(dt_iop_module_t *self,
     out[k+0] = RGB_out[0];
     out[k+1] = RGB_out[1];
     out[k+2] = RGB_out[2];    
-    // out[k+0] = factor_resaturation;
-    // out[k+1] = factor_resaturation;
-    // out[k+2] = factor_resaturation;
     out[k+3] = in[k+3];
-
-
-    // TODO: see colorbalancergb on how to get work profile
-    // like   dt_colormatrix_mul(output_matrix, XYZ_D50_to_D65_CAT16, work_profile->matrix_in); // output_matrix used as temp buffer
-    // and then to get the color matrix etc. for converting from work profile to XYZ_D65, which is needed for oklab conversion
-
-    // Convert in and out to oklab
-
-    // copy hue from in to out
-
-    // Convert back to RGB
-
-
-    // TODO: apply preserve_hue here
   }
 }
 
