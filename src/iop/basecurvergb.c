@@ -98,9 +98,11 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   float loglogscale;
   GtkWidget *logbase;
   
-  // Custom histogram after exposure compensation
-  uint32_t *custom_histogram;           // RGB histogram bins (3 channels x 256 bins)
-  uint32_t custom_histogram_max[3];     // Maximum counts per channel  
+  // Custom histogram after exposure compensation (double-buffered for thread safety)
+  uint32_t *custom_histogram;           // Current display histogram (3 channels x 256 bins)
+  uint32_t *custom_histogram_temp;      // Temporary calculation buffer
+  uint32_t custom_histogram_max[3];     // Maximum counts per channel for display
+  uint32_t custom_histogram_max_temp[3]; // Temporary max values during calculation
   gboolean custom_histogram_valid;      // TRUE if histogram is up to date
   float last_exposure_compensation;     // Last exposure compensation value used
   dt_hash_t last_input_hash;            // Hash of last input data processed
@@ -486,17 +488,24 @@ void process(dt_iop_module_t *self,
     
     if(!g->custom_histogram_valid || params_changed || input_changed)
     {
-      // Allocate histogram buffer if needed
+      // Allocate histogram buffers if needed (double-buffered)
       if(!g->custom_histogram)
       {
         g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+        g->custom_histogram_temp = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
       }
       
-      if(g->custom_histogram)
+      if(g->custom_histogram && g->custom_histogram_temp)
       {
-        // Calculate histogram after exposure compensation
+        // Calculate histogram into temporary buffer (avoids race conditions)
         _calculate_custom_histogram(in, wd, ht, d->pre_curve_exposure_compensation,
-                                   g->custom_histogram, g->custom_histogram_max);
+                                   g->custom_histogram_temp, g->custom_histogram_max_temp);
+        
+        // Atomically swap buffers and update metadata
+        uint32_t *temp_ptr = g->custom_histogram;
+        g->custom_histogram = g->custom_histogram_temp;
+        g->custom_histogram_temp = temp_ptr;
+        memcpy(g->custom_histogram_max, g->custom_histogram_max_temp, sizeof(g->custom_histogram_max));
         
         g->custom_histogram_valid = TRUE;
         g->last_exposure_compensation = d->pre_curve_exposure_compensation;
@@ -895,8 +904,8 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
     float hist_max = 0.0f;
     const gboolean is_linear = darktable.lib->proxy.histogram.is_linear;
     
-    // Only use our custom histogram if it's valid (no fallback to avoid flickering)
-    if(g && g->custom_histogram_valid && g->custom_histogram)
+    // Show custom histogram if available (even if currently being recalculated)
+    if(g && g->custom_histogram)
     {
       hist = g->custom_histogram;
       memcpy(hist_max_values, g->custom_histogram_max, sizeof(hist_max_values));
@@ -1382,10 +1391,12 @@ void gui_init(dt_iop_module_t *self)
   
   // Initialize custom histogram fields
   g->custom_histogram = NULL;
+  g->custom_histogram_temp = NULL;
   g->custom_histogram_valid = FALSE;
   g->last_exposure_compensation = NAN;  // Force initial calculation
   g->last_input_hash = DT_INVALID_HASH;
   memset(g->custom_histogram_max, 0, sizeof(g->custom_histogram_max));
+  memset(g->custom_histogram_max_temp, 0, sizeof(g->custom_histogram_max_temp));
 
   g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_height(0));
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->area), _("abscissa: input, ordinate: output. works on RGB channels"));
@@ -1439,11 +1450,16 @@ void gui_cleanup(dt_iop_module_t *self)
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
   dt_draw_curve_destroy(g->minmax_curve);
   
-  // Clean up custom histogram buffer
+  // Clean up custom histogram buffers
   if(g->custom_histogram)
   {
     dt_free_align(g->custom_histogram);
     g->custom_histogram = NULL;
+  }
+  if(g->custom_histogram_temp)
+  {
+    dt_free_align(g->custom_histogram_temp);
+    g->custom_histogram_temp = NULL;
   }
 }
 
