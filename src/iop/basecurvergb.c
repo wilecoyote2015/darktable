@@ -416,7 +416,6 @@ void tiling_callback(dt_iop_module_t *self,
 }
 #endif
 
-// Calculate RGB histogram after exposure compensation (for GUI display)
 /**
  * Optimized histogram calculation with OpenMP parallelization.
  * Uses reduction pattern following darktable vectorization conventions.
@@ -511,7 +510,7 @@ static inline void update_thumb_buffer(dt_iop_module_t *self,
     g->thumb_width = width;
     g->thumb_height = height;
     g->thumb_valid = FALSE;
-  
+    
     fprintf(stderr, "[basecurve] Reallocated thumb buffer: %dx%d\n", width, height);
   }
   
@@ -600,6 +599,103 @@ static inline void calculate_histogram_from_thumb(dt_iop_basecurvergb_gui_data_t
   #undef HIST_SIZE
 }
 
+/**
+ * Update histogram for GUI preview when needed.
+ * This function handles all histogram-related calculations for the preview pipeline,
+ * using optimized caching strategies for performance.
+ * 
+ * @param self     The IOP module instance
+ * @param piece    The pipeline piece data
+ * @param in       Input image data (const restrict pointer)
+ * @param roi_in   Input region of interest
+ */
+static inline void update_histogram_for_preview(dt_iop_module_t *const self,
+                                               dt_dev_pixelpipe_iop_t *const piece,
+                                               const float *const restrict in,
+                                               const dt_iop_roi_t *const roi_in)
+{
+  // Only calculate histogram for GUI in preview pipeline
+  dt_iop_basecurvergb_gui_data_t *const g = self->gui_data;
+  if(!g || !self->dev->gui_attached || !(piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
+    return;
+    
+  const dt_iop_basecurvergb_data_t *const d = piece->data;
+  const int wd = roi_in->width;
+  const int ht = roi_in->height;
+  
+  dt_iop_gui_enter_critical_section(self);
+  
+  // Check if recalculation is needed with debug output
+  const gboolean exposure_changed = (isnan(g->last_exposure_compensation) || 
+                                    fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
+  const gboolean histogram_invalid = !g->custom_histogram_valid;
+  const gboolean thumb_invalid = !g->thumb_valid;
+  
+  if(exposure_changed || histogram_invalid || thumb_invalid)
+  {
+    fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f\n",
+            exposure_changed, histogram_invalid, thumb_invalid, d->pre_curve_exposure_compensation);
+    
+    // Allocate histogram buffers if needed (double-buffered for thread safety)
+    if(!g->custom_histogram)
+    {
+      g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+      g->custom_histogram_temp = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+      fprintf(stderr, "[basecurve] Allocated histogram buffers\n");
+    }
+    
+    if(g->custom_histogram && g->custom_histogram_temp)
+    {
+      // Strategy: Use thumb buffer for efficiency, but fall back to direct calculation
+      // if thumb is not available or image size is small enough
+      const size_t num_pixels = (size_t)wd * ht;
+      const gboolean use_thumb = (num_pixels > 400000); // Use thumb for images > ~400k pixels
+      
+      if(use_thumb && (thumb_invalid || exposure_changed))
+      {
+        // Update thumb buffer with current exposure compensation
+        update_thumb_buffer(self, in, wd, ht, d->pre_curve_exposure_compensation);
+        fprintf(stderr, "[basecurve] Updated thumb buffer (%dx%d)\n", wd, ht);
+      }
+      
+      // Calculate histogram using the most appropriate method
+      if(use_thumb && g->thumb_valid)
+      {
+        // Fast path: calculate from cached thumb buffer
+        calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
+        fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
+      }
+      else
+      {
+        // Direct calculation for small images or when thumb is unavailable
+        calculate_custom_histogram_optimized(in, wd, ht, d->pre_curve_exposure_compensation,
+                                           g->custom_histogram_temp, g->custom_histogram_max_temp);
+        fprintf(stderr, "[basecurve] Used direct calculation for histogram\n");
+      }
+      
+      // Atomically swap buffers and update metadata
+      uint32_t *temp_ptr = g->custom_histogram;
+      g->custom_histogram = g->custom_histogram_temp;
+      g->custom_histogram_temp = temp_ptr;
+      memcpy(g->custom_histogram_max, g->custom_histogram_max_temp, sizeof(g->custom_histogram_max));
+      
+      g->custom_histogram_valid = TRUE;
+      g->last_exposure_compensation = d->pre_curve_exposure_compensation;
+      
+      // Trigger GUI redraw with lower priority than image processing
+      if(self->widget) 
+      {
+        dt_control_queue_redraw_widget(self->widget);
+      }
+      
+      fprintf(stderr, "[basecurve] Histogram calculation completed, max values: R=%u G=%u B=%u\n",
+              g->custom_histogram_max[0], g->custom_histogram_max[1], g->custom_histogram_max[2]);
+    }
+  }
+  
+  dt_iop_gui_leave_critical_section(self);
+}
+
 void process(dt_iop_module_t *self,
              dt_dev_pixelpipe_iop_t *piece,
              const void *const ivoid,
@@ -623,83 +719,8 @@ void process(dt_iop_module_t *self,
   const float factor_pre_curve_exposure_compensation = powf(2.0f, d->pre_curve_exposure_compensation);
   const float preserve_hue = d->preserve_hue;
   
-  // Calculate custom histogram for GUI (preview pipeline only)
-  // Optimized approach: use thumb buffer for faster updates
-  dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
-  if(g && self->dev->gui_attached && (piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
-  {
-    dt_iop_gui_enter_critical_section(self);
-    
-    // Check if recalculation is needed with debug output
-    const gboolean exposure_changed = (isnan(g->last_exposure_compensation) || 
-                                      fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
-    const gboolean histogram_invalid = !g->custom_histogram_valid;
-    const gboolean thumb_invalid = !g->thumb_valid;
-    
-    if(exposure_changed || histogram_invalid || thumb_invalid)
-    {
-      fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f\n",
-              exposure_changed, histogram_invalid, thumb_invalid, d->pre_curve_exposure_compensation);
-      
-      // Allocate histogram buffers if needed (double-buffered for thread safety)
-      if(!g->custom_histogram)
-      {
-        g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
-        g->custom_histogram_temp = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
-        fprintf(stderr, "[basecurve] Allocated histogram buffers\n");
-      }
-      
-      if(g->custom_histogram && g->custom_histogram_temp)
-      {
-        // Strategy: Use thumb buffer for efficiency, but fall back to direct calculation
-        // if thumb is not available or image size is small enough
-        const size_t num_pixels = (size_t)wd * ht;
-        const gboolean use_thumb = (num_pixels > 400000); // Use thumb for images > ~400k pixels
-        
-        if(use_thumb && (thumb_invalid || exposure_changed))
-        {
-          // Update thumb buffer with current exposure compensation
-          update_thumb_buffer(self, in, wd, ht, d->pre_curve_exposure_compensation);
-          fprintf(stderr, "[basecurve] Updated thumb buffer (%dx%d)\n", wd, ht);
-        }
-        
-        // Calculate histogram using the most appropriate method
-        if(use_thumb && g->thumb_valid)
-        {
-          // Fast path: calculate from cached thumb buffer
-          calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
-          fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
-        }
-        else
-        {
-          // Direct calculation for small images or when thumb is unavailable
-          calculate_custom_histogram_optimized(in, wd, ht, d->pre_curve_exposure_compensation,
-                                             g->custom_histogram_temp, g->custom_histogram_max_temp);
-          fprintf(stderr, "[basecurve] Used direct calculation for histogram\n");
-        }
-        
-        // Atomically swap buffers and update metadata
-        uint32_t *temp_ptr = g->custom_histogram;
-        g->custom_histogram = g->custom_histogram_temp;
-        g->custom_histogram_temp = temp_ptr;
-        memcpy(g->custom_histogram_max, g->custom_histogram_max_temp, sizeof(g->custom_histogram_max));
-        
-        g->custom_histogram_valid = TRUE;
-        g->last_exposure_compensation = d->pre_curve_exposure_compensation;
-        
-        // Trigger GUI redraw with lower priority than image processing
-        if(self->widget) 
-        {
-          dt_control_queue_redraw_widget(self->widget);
-        }
-        
-        fprintf(stderr, "[basecurve] Histogram calculation completed, max values: R=%u G=%u B=%u\n",
-                g->custom_histogram_max[0], g->custom_histogram_max[1], g->custom_histogram_max[2]);
-      }
-    }
-    
-    dt_iop_gui_leave_critical_section(self);
-  }
+  // Update histogram for GUI preview when needed (separate function for better code organization)
+  update_histogram_for_preview(self, piece, in, roi_in);
 
   // get matrix for working profile to XYZ_D65 conversion to prepare for the other conversions
   dt_colormatrix_t XYZ_D65_to_working_profile = { { 0.0f } };
