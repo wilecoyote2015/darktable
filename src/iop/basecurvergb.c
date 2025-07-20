@@ -409,11 +409,10 @@ void process(dt_iop_module_t *self,
              const dt_iop_roi_t *const roi_in,
              const dt_iop_roi_t *const roi_out)
 {
-
+  // get the working profile so that we'll know how to convert to XYZ_D65 and back
   const dt_iop_order_iccprofile_info_t *const work_profile
       = dt_ioppr_get_pipe_current_profile_info(self, piece->pipe);
   if(work_profile == NULL) return; // cannot continue without a working profile
-
 
   const float *const in = (const float *)ivoid;
   float *const out = (float *)ovoid;
@@ -421,16 +420,12 @@ void process(dt_iop_module_t *self,
   //however the for loops only handled RGBA - FIXME, determine what possible data formats and channel
   //configurations we might encounter here and handle those too
   dt_iop_basecurvergb_data_t *const d = piece->data;
-  // TODO: will be used for color preservation
-  // const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_iop_work_profile_info(piece->module, piece->module->dev->iop);
 
   const int wd = roi_in->width, ht = roi_in->height;
   const float factor_source_white = powf(2.0f, d->source_white);
   const float preserve_hue = d->preserve_hue;
 
-
-  // get matrix for working profile to XYZ_D65 conversion
-  // TODO: I assume that working profile matrix is conversion to XYZ_D50, so that adaption to D65 is needed. Correct?
+  // get matrix for working profile to XYZ_D65 conversion to prepare for the other conversions
   dt_colormatrix_t XYZ_D65_to_working_profile = { { 0.0f } };
   dt_colormatrix_t working_profile_to_XYZ_D65 = { { 0.0f } };
   dt_colormatrix_mul(working_profile_to_XYZ_D65, XYZ_D50_to_D65_CAT16, work_profile->matrix_in);
@@ -442,8 +437,6 @@ void process(dt_iop_module_t *self,
   dt_colormatrix_transpose(XYZ_D65_to_working_profile_transposed, XYZ_D65_to_working_profile);
   dt_colormatrix_transpose(working_profile_to_XYZ_D65_transposed, working_profile_to_XYZ_D65);
 
-
-  // TODO: scale to user-defined max value and clip
   const size_t npixels = (size_t)wd * ht;
   DT_OMP_FOR()
   for(size_t k = 0; k < 4*npixels; k += 4)
@@ -494,16 +487,9 @@ void process(dt_iop_module_t *self,
     dt_apply_transposed_color_matrix(XYZ_D65_out, XYZ_D65_to_working_profile_transposed, RGB_out);
 
     // TODO: recover lightness after highlight saturation preservation
-    // by comparing lightness before and after saturation preservation
-    // dt_aligned_pixel_t HSL_out_before_hue_preservation;
-    // dt_aligned_pixel_t HSL_out_after_hue_preservation;
-    // dt_RGB_2_HSV(RGB_out_before_hue_preservation, HSL_out_before_hue_preservation);
-    // dt_RGB_2_HSV(RGB_out, HSL_out_after_hue_preservation);
-    // const float L_before = HSL_out_before_hue_preservation[2];
-    // // const float L_after = HSL_out_after_hue_preservation[1];
-    // HSL_out_after_hue_preservation[2] = L_before * 3;
-    // dt_HSV_2_RGB(HSL_out_after_hue_preservation, RGB_out);
-
+    // required because OKlab hue preservation may yield out-of-gamut colors for 
+    // bright non-primary colors.
+    // in this case, we should prefer perceived lightness over saturation maybe?
 
     // do saturation preservation
     const float min = fminf(RGB_out[0], fminf(RGB_out[1], RGB_out[2]));
