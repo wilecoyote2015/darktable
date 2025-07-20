@@ -452,6 +452,10 @@ void process(dt_iop_module_t *self,
 
     // convert into OKHCL space and preserve hue by mixing in 
     // the hue from the image before curve application
+    // Motivation for this approach: yields subjectively / visually 
+    // more pleasing results than the approach in agx or sigmoid, especially
+    // for sunsets and other scenes with highly saturated non-primary colors.
+    // here, preserve_hue in OKHCL yields best perceived lightness preservation in my opinion.
     dt_aligned_pixel_t RGB_in;
     dt_aligned_pixel_t RGB_out;
     dt_aligned_pixel_t RGB_out_before_hue_preservation;
