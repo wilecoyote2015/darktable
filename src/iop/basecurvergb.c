@@ -536,6 +536,16 @@ void commit_params(dt_iop_module_t *self,
   dt_iop_basecurvergb_data_t *d = piece->data;
   dt_iop_basecurvergb_params_t *p = (dt_iop_basecurvergb_params_t *)p1;
 
+  // Enable histogram for preview pipeline (same as rgbcurve.c)
+  if(pipe->type & DT_DEV_PIXELPIPE_PREVIEW)
+  {
+    piece->request_histogram |= DT_REQUEST_ON;
+  }
+  else
+  {
+    piece->request_histogram &= ~DT_REQUEST_ON;
+  }
+
   d->preserve_hue = p->preserve_hue;
   d->preserve_highlight_saturation = p->preserve_highlight_saturation;
   d->pre_curve_exposure_compensation = p->pre_curve_exposure_compensation;
@@ -611,6 +621,10 @@ static float eval_grey(float x)
 void init(dt_iop_module_t *self)
 {
   dt_iop_default_init(self);
+  
+  // Request histogram for GUI display (same as rgbcurve.c)
+  self->request_histogram |= (DT_REQUEST_ON | DT_REQUEST_EXPANDED);
+  
   dt_iop_basecurvergb_params_t *d = self->default_params;
   d->basecurve[0][1].x = d->basecurve[0][1].y = 1.0;
   d->basecurvergb_nodes[0] = 2;
@@ -749,6 +763,8 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
   cairo_rectangle(cr, 0, 0, width, height);
   cairo_fill(cr);
 
+
+
   cairo_translate(cr, 0, height);
   if(g->selected >= 0)
   {
@@ -783,6 +799,47 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
     pango_font_description_free(desc);
     g_object_unref(layout);
   }
+
+  // Draw histogram background (only if module is enabled)
+  // This must be drawn BEFORE the cairo_scale Y-flip to match rgbcurve.c coordinate system
+  if(self->enabled)
+  {
+    const uint32_t *hist = self->histogram;
+    const gboolean is_linear = darktable.lib->proxy.histogram.is_linear;
+    float hist_max = 0.0f;
+    
+    if(hist)
+    {
+      // Calculate maximum across all RGB channels
+      for(int k = 0; k < 3; k++)
+        hist_max = fmaxf(hist_max, self->histogram_max[k]);
+      
+      if(!is_linear)
+        hist_max = logf(1.0f + hist_max);
+    }
+
+    if(hist && hist_max > 0.0f)
+    {
+      cairo_push_group_with_content(cr, CAIRO_CONTENT_COLOR);
+      cairo_scale(cr, width / 255.0, -(height - DT_PIXEL_APPLY_DPI(5)) / hist_max);
+      
+      // Draw all RGB channels with additive blending
+      cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
+      for(int k = 0; k < 3; k++)  // RGB channels (0=R, 1=G, 2=B)
+      {
+        set_color(cr, darktable.bauhaus->graph_colors[k]);
+        dt_draw_histogram_8_zoomed(cr, hist, 4, k,
+                                   1.0f,   // zoom_factor (no zoom for simplified version)
+                                   0.0f,   // offset_x (no offset)
+                                   0.0f,   // offset_y (no offset)
+                                   is_linear);  // use histogram's linear setting
+      }
+      
+      cairo_pop_group_to_source(cr);
+      cairo_paint_with_alpha(cr, 0.2);  // Semi-transparent histogram
+    }
+  }
+
   cairo_scale(cr, 1.0f, -1.0f);
 
   // draw grid
