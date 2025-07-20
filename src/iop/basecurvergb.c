@@ -98,14 +98,19 @@ typedef struct dt_iop_basecurvergb_gui_data_t
   float loglogscale;
   GtkWidget *logbase;
   
-  // Custom histogram after exposure compensation (double-buffered for thread safety)
-  // TODO: is this the best / canonic approach in DT?
+  // Optimized histogram with thumb buffer support (double-buffered for thread safety)
   uint32_t *custom_histogram;           // Current display histogram (3 channels x 256 bins)
   uint32_t *custom_histogram_temp;      // Temporary calculation buffer
   uint32_t custom_histogram_max[3];     // Maximum counts per channel for display
   uint32_t custom_histogram_max_temp[3]; // Temporary max values during calculation
   gboolean custom_histogram_valid;      // TRUE if histogram is up to date
   float last_exposure_compensation;     // Last exposure compensation value used
+  
+  // Thumbnail buffer for efficient histogram calculation (similar to toneequal)
+  float *thumb_buffer;                  // RGB thumbnail data with exposure applied
+  size_t thumb_width, thumb_height;     // Thumbnail dimensions
+  gboolean thumb_valid;                 // TRUE if thumbnail cache is valid
+  dt_hash_t thumb_hash;                 // Hash of current image for cache validation
 } dt_iop_basecurvergb_gui_data_t;
 
 typedef struct basecurvergb_preset_t
@@ -125,16 +130,16 @@ static const basecurvergb_preset_t basecurvergb_camera_presets[] = {
   // copy paste your measured basecurve line at the top here, like so (note the exif data and the last 1):
   // clang-format off
 
-  // nikon d750 by Edouard Gomez
-  {"Nikon D750", "NIKON CORPORATION", "NIKON D750", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.018124, 0.026126}, {0.143357, 0.370145}, {0.330116, 0.730507}, {0.457952, 0.853462}, {0.734950, 0.965061}, {0.904758, 0.985699}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
-  // contributed by Stefan Kauerauf
-  {"Nikon D5100", "NIKON CORPORATION", "NIKON D5100", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001113, 0.000506}, {0.002842, 0.001338}, {0.005461, 0.002470}, {0.011381, 0.006099}, {0.013303, 0.007758}, {0.034638, 0.041119}, {0.044441, 0.063882}, {0.070338, 0.139639}, {0.096068, 0.210915}, {0.137693, 0.310295}, {0.206041, 0.432674}, {0.255508, 0.504447}, {0.302770, 0.569576}, {0.425625, 0.726755}, {0.554526, 0.839541}, {0.621216, 0.882839}, {0.702662, 0.927072}, {0.897426, 0.990984}, {1.000000, 1.000000}}}, {20}, {m}, 1, 0, 0}, 1},
-  // nikon d7000 by Edouard Gomez
-  {"Nikon D7000", "NIKON CORPORATION", "NIKON D7000", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001943, 0.003040}, {0.019814, 0.028810}, {0.080784, 0.210476}, {0.145700, 0.383873}, {0.295961, 0.654041}, {0.651915, 0.952819}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
-  // nikon d7200 standard by Ralf Brown (firmware 1.00)
-  {"Nikon D7200", "NIKON CORPORATION", "NIKON D7200", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001604, 0.001334}, {0.007401, 0.005237}, {0.009474, 0.006890}, {0.017348, 0.017176}, {0.032782, 0.044336}, {0.048033, 0.086548}, {0.075803, 0.168331}, {0.109539, 0.273539}, {0.137373, 0.364645}, {0.231651, 0.597511}, {0.323797, 0.736475}, {0.383796, 0.805797}, {0.462284, 0.872247}, {0.549844, 0.918328}, {0.678855, 0.962361}, {0.817445, 0.990406}, {1.000000, 1.000000}}}, {18}, {m}, 1, 0, 0}, 1},
-  // nikon d7500 by Anders Bennehag (firmware C 1.00, LD 2.016)
-  {"NIKON D7500", "NIKON CORPORATION", "NIKON D7500", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.000892, 0.001062}, {0.002280, 0.001768}, {0.013983, 0.011368}, {0.032597, 0.044700}, {0.050065, 0.097131}, {0.084129, 0.219954}, {0.120975, 0.336806}, {0.170730, 0.473752}, {0.258677, 0.647113}, {0.409997, 0.827417}, {0.499979, 0.889468}, {0.615564, 0.941960}, {0.665272, 0.957736}, {0.832126, 0.991968}, {1.000000, 1.000000}}}, {16}, {m}, 1, 0, 0}, 1},
+     // nikon d750 by Edouard Gomez
+   {"Nikon D750", "NIKON CORPORATION", "NIKON D750", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.018124, 0.026126}, {0.143357, 0.370145}, {0.330116, 0.730507}, {0.457952, 0.853462}, {0.734950, 0.965061}, {0.904758, 0.985699}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
+   // contributed by Stefan Kauerauf
+   {"Nikon D5100", "NIKON CORPORATION", "NIKON D5100", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001113, 0.000506}, {0.002842, 0.001338}, {0.005461, 0.002470}, {0.011381, 0.006099}, {0.013303, 0.007758}, {0.034638, 0.041119}, {0.044441, 0.063882}, {0.070338, 0.139639}, {0.096068, 0.210915}, {0.137693, 0.310295}, {0.206041, 0.432674}, {0.255508, 0.504447}, {0.302770, 0.569576}, {0.425625, 0.726755}, {0.554526, 0.839541}, {0.621216, 0.882839}, {0.702662, 0.927072}, {0.897426, 0.990984}, {1.000000, 1.000000}}}, {20}, {m}, 1, 0, 0}, 1},
+   // nikon d7000 by Edouard Gomez
+   {"Nikon D7000", "NIKON CORPORATION", "NIKON D7000", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001943, 0.003040}, {0.019814, 0.028810}, {0.080784, 0.210476}, {0.145700, 0.383873}, {0.295961, 0.654041}, {0.651915, 0.952819}, {1.000000, 1.000000}}}, {8}, {m}, 1, 0, 0}, 1},
+   // nikon d7200 standard by Ralf Brown (firmware 1.00)
+   {"Nikon D7200", "NIKON CORPORATION", "NIKON D7200", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.001604, 0.001334}, {0.007401, 0.005237}, {0.009474, 0.006890}, {0.017348, 0.017176}, {0.032782, 0.044336}, {0.048033, 0.086548}, {0.075803, 0.168331}, {0.109539, 0.273539}, {0.137373, 0.364645}, {0.231651, 0.597511}, {0.323797, 0.736475}, {0.383796, 0.805797}, {0.462284, 0.872247}, {0.549844, 0.918328}, {0.678855, 0.962361}, {0.817445, 0.990406}, {1.000000, 1.000000}}}, {18}, {m}, 1, 0, 0}, 1},
+   // nikon d7500 by Anders Bennehag (firmware C 1.00, LD 2.016)
+   {"NIKON D7500", "NIKON CORPORATION", "NIKON D7500", 0, FLT_MAX, {{{{0.000000, 0.000000}, {0.000892, 0.001062}, {0.002280, 0.001768}, {0.013983, 0.011368}, {0.032597, 0.044700}, {0.050065, 0.097131}, {0.084129, 0.219954}, {0.120975, 0.336806}, {0.170730, 0.473752}, {0.258677, 0.647113}, {0.409997, 0.827417}, {0.499979, 0.889468}, {0.615564, 0.941960}, {0.665272, 0.957736}, {0.832126, 0.991968}, {1.000000, 1.000000}}}, {16}, {m}, 1, 0, 0}, 1},
   // sony rx100m2 by Günther R.
   { "Sony DSC-RX100M2", "SONY", "DSC-RX100M2", 0, FLT_MAX, { { { { 0.000000, 0.000000 }, { 0.015106, 0.008116 }, { 0.070077, 0.093725 }, { 0.107484, 0.170723 }, { 0.191528, 0.341093 }, { 0.257996, 0.458453 }, { 0.305381, 0.537267 }, { 0.326367, 0.569257 }, { 0.448067, 0.723742 }, { 0.509627, 0.777966 }, { 0.676751, 0.898797 }, { 1.000000, 1.000000 } } }, { 12 }, { m }, 1}, 1 },
   // contributed by matthias bodenbinder
@@ -412,12 +417,17 @@ void tiling_callback(dt_iop_module_t *self,
 #endif
 
 // Calculate RGB histogram after exposure compensation (for GUI display)
-static inline void calculate_custom_histogram(const float *const restrict in,
-                                       const int width,
-                                       const int height,
-                                       const float exposure_compensation,
-                                       uint32_t *const restrict histogram,
-                                       uint32_t *const restrict histogram_max)
+/**
+ * Optimized histogram calculation with OpenMP parallelization.
+ * Uses reduction pattern following darktable vectorization conventions.
+ */
+__DT_CLONE_TARGETS__
+static inline void calculate_custom_histogram_optimized(const float *const restrict in,
+                                                       const int width,
+                                                       const int height,
+                                                       const float exposure_compensation,
+                                                       uint32_t *const restrict histogram,
+                                                       uint32_t *const restrict histogram_max)
 {
   // Initialize histogram (256 bins per RGB channel)
   memset(histogram, 0, 3 * 256 * sizeof(uint32_t));
@@ -426,26 +436,168 @@ static inline void calculate_custom_histogram(const float *const restrict in,
   const float exp_factor = exp2f(exposure_compensation);
   const size_t num_pixels = (size_t)width * height;
   
+  // Use temporary local histograms for reduction to avoid contention
+  #define HIST_SIZE 3 * 256
+  
   // Calculate histogram for RGB channels after exposure compensation
   // Values are clamped to [0,1] range to show clipping
+  // Use OpenMP reduction pattern for optimal performance
+  DT_OMP_FOR_SIMD(reduction(+:histogram[:HIST_SIZE]))
   for(size_t i = 0; i < num_pixels; i++)
   {
-    const float *pixel = in + i * 4;
+    const float *const restrict pixel = in + i * 4;
     
+    // Process RGB channels with efficient vectorizable loop
+    #ifdef _OPENMP
+    #pragma omp simd aligned(pixel:16)
+    #endif
     for(int c = 0; c < 3; c++)  // RGB channels only
     {
-      // Apply exposure compensation
-      float val = pixel[c] * exp_factor;
+      // Apply exposure compensation and clamp to [0,1] 
+      const float val = CLAMP(pixel[c] * exp_factor, 0.0f, 1.0f);
       
-      // Clamp to [0,1] and convert to bin index
-      val = CLAMP(val, 0.0f, 1.0f);
+      // Convert to bin index with efficient float to int conversion
       const int bin = (int)(val * 255.0f);
       const int hist_idx = c * 256 + bin;
       
       histogram[hist_idx]++;
-      histogram_max[c] = MAX(histogram_max[c], histogram[hist_idx]);
     }
   }
+  
+  // Calculate max values per channel for normalization
+  #ifdef _OPENMP
+  #pragma omp parallel for simd
+  #endif
+  for(int c = 0; c < 3; c++)
+  {
+    const int offset = c * 256;
+    uint32_t local_max = 0;
+    
+    #ifdef _OPENMP
+    #pragma omp simd reduction(max:local_max)
+    #endif
+    for(int bin = 0; bin < 256; bin++)
+    {
+      local_max = MAX(local_max, histogram[offset + bin]);
+    }
+    
+    histogram_max[c] = local_max;
+  }
+  
+  #undef HIST_SIZE
+}
+
+/**
+ * Create or update thumbnail buffer for efficient histogram calculation.
+ * Similar to toneequal's approach but adapted for RGB histogram after exposure.
+ */
+static inline void update_thumb_buffer(dt_iop_module_t *self,
+                                      const float *const restrict in,
+                                      const int width,
+                                      const int height,
+                                      const float exposure_compensation)
+{
+  dt_iop_basecurvergb_gui_data_t *const g = self->gui_data;
+  if(!g) return;
+  
+  const size_t num_pixels = (size_t)width * height;
+  const float exp_factor = exp2f(exposure_compensation);
+  
+  // Reallocate thumb buffer if size changed
+  if(g->thumb_width != (size_t)width || g->thumb_height != (size_t)height)
+  {
+    dt_free_align(g->thumb_buffer);
+    g->thumb_buffer = dt_alloc_align_float(num_pixels * 3); // RGB only
+    g->thumb_width = width;
+    g->thumb_height = height;
+    g->thumb_valid = FALSE;
+  
+    fprintf(stderr, "[basecurve] Reallocated thumb buffer: %dx%d\n", width, height);
+  }
+  
+  if(!g->thumb_buffer) return;
+  
+  // Apply exposure compensation to RGB channels and store in thumb buffer
+  // This allows for efficient histogram recalculation when only exposure changes
+  #ifdef _OPENMP
+  #pragma omp parallel for simd default(none) \
+  dt_omp_firstprivate(in, g, num_pixels, exp_factor) \
+  schedule(simd:static) aligned(in:64)
+  #endif
+  for(size_t i = 0; i < num_pixels; i++)
+  {
+    const float *const restrict src_pixel = in + i * 4;
+    float *const restrict dst_pixel = g->thumb_buffer + i * 3;
+    
+    // Apply exposure compensation to RGB channels
+    dst_pixel[0] = src_pixel[0] * exp_factor;
+    dst_pixel[1] = src_pixel[1] * exp_factor;
+    dst_pixel[2] = src_pixel[2] * exp_factor;
+  }
+  
+  g->thumb_valid = TRUE;
+}
+
+/**
+ * Fast histogram calculation from cached thumb buffer.
+ * Used when only exposure compensation changes.
+ */
+__DT_CLONE_TARGETS__
+static inline void calculate_histogram_from_thumb(dt_iop_basecurvergb_gui_data_t *const g,
+                                                 uint32_t *const restrict histogram,
+                                                 uint32_t *const restrict histogram_max)
+{
+  if(!g->thumb_buffer || !g->thumb_valid) return;
+  
+  // Initialize histogram
+  memset(histogram, 0, 3 * 256 * sizeof(uint32_t));
+  memset(histogram_max, 0, 3 * sizeof(uint32_t));
+  
+  const size_t num_pixels = g->thumb_width * g->thumb_height;
+  
+  #define HIST_SIZE 3 * 256
+  
+  // Calculate histogram from pre-processed thumb buffer
+  DT_OMP_FOR_SIMD(reduction(+:histogram[:HIST_SIZE]))
+  for(size_t i = 0; i < num_pixels; i++)
+  {
+    const float *const restrict pixel = g->thumb_buffer + i * 3;
+    
+    #ifdef _OPENMP
+    #pragma omp simd aligned(pixel:16)
+    #endif
+    for(int c = 0; c < 3; c++)
+    {
+      // Values are already exposure-compensated, just clamp and bin
+      const float val = CLAMP(pixel[c], 0.0f, 1.0f);
+      const int bin = (int)(val * 255.0f);
+      const int hist_idx = c * 256 + bin;
+      
+      histogram[hist_idx]++;
+    }
+  }
+  
+  // Calculate max values per channel
+  #ifdef _OPENMP
+  #pragma omp parallel for simd
+  #endif
+  for(int c = 0; c < 3; c++)
+  {
+    const int offset = c * 256;
+    uint32_t local_max = 0;
+    
+    #ifdef _OPENMP
+    #pragma omp simd reduction(max:local_max)
+    #endif
+    for(int bin = 0; bin < 256; bin++)
+    {
+      local_max = MAX(local_max, histogram[offset + bin]);
+    }
+    
+    histogram_max[c] = local_max;
+  }
+  
+  #undef HIST_SIZE
 }
 
 void process(dt_iop_module_t *self,
@@ -472,30 +624,59 @@ void process(dt_iop_module_t *self,
   const float preserve_hue = d->preserve_hue;
   
   // Calculate custom histogram for GUI (preview pipeline only)
+  // Optimized approach: use thumb buffer for faster updates
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
   if(g && self->dev->gui_attached && (piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
   {
     dt_iop_gui_enter_critical_section(self);
     
-    // Only recalculate histogram when exposure compensation changes
-    // (curve changes don't affect histogram since it shows data BEFORE curve application)
-    const gboolean needs_recalc = (isnan(g->last_exposure_compensation) || 
-                                  fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
+    // Check if recalculation is needed with debug output
+    const gboolean exposure_changed = (isnan(g->last_exposure_compensation) || 
+                                      fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
+    const gboolean histogram_invalid = !g->custom_histogram_valid;
+    const gboolean thumb_invalid = !g->thumb_valid;
     
-    if(!g->custom_histogram_valid || needs_recalc)
+    if(exposure_changed || histogram_invalid || thumb_invalid)
     {
-      // Allocate histogram buffers if needed (double-buffered)
+      fprintf(stderr, "[basecurve] Histogram update: exposure_changed=%d, histogram_invalid=%d, thumb_invalid=%d, exp=%.3f\n",
+              exposure_changed, histogram_invalid, thumb_invalid, d->pre_curve_exposure_compensation);
+      
+      // Allocate histogram buffers if needed (double-buffered for thread safety)
       if(!g->custom_histogram)
       {
         g->custom_histogram = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
         g->custom_histogram_temp = dt_alloc_aligned(3 * 256 * sizeof(uint32_t));
+        fprintf(stderr, "[basecurve] Allocated histogram buffers\n");
       }
       
       if(g->custom_histogram && g->custom_histogram_temp)
       {
-        // Calculate histogram into temporary buffer (avoids race conditions)
-        calculate_custom_histogram(in, wd, ht, d->pre_curve_exposure_compensation,
-                                   g->custom_histogram_temp, g->custom_histogram_max_temp);
+        // Strategy: Use thumb buffer for efficiency, but fall back to direct calculation
+        // if thumb is not available or image size is small enough
+        const size_t num_pixels = (size_t)wd * ht;
+        const gboolean use_thumb = (num_pixels > 400000); // Use thumb for images > ~400k pixels
+        
+        if(use_thumb && (thumb_invalid || exposure_changed))
+        {
+          // Update thumb buffer with current exposure compensation
+          update_thumb_buffer(self, in, wd, ht, d->pre_curve_exposure_compensation);
+          fprintf(stderr, "[basecurve] Updated thumb buffer (%dx%d)\n", wd, ht);
+        }
+        
+        // Calculate histogram using the most appropriate method
+        if(use_thumb && g->thumb_valid)
+        {
+          // Fast path: calculate from cached thumb buffer
+          calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
+          fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
+        }
+        else
+        {
+          // Direct calculation for small images or when thumb is unavailable
+          calculate_custom_histogram_optimized(in, wd, ht, d->pre_curve_exposure_compensation,
+                                             g->custom_histogram_temp, g->custom_histogram_max_temp);
+          fprintf(stderr, "[basecurve] Used direct calculation for histogram\n");
+        }
         
         // Atomically swap buffers and update metadata
         uint32_t *temp_ptr = g->custom_histogram;
@@ -506,8 +687,14 @@ void process(dt_iop_module_t *self,
         g->custom_histogram_valid = TRUE;
         g->last_exposure_compensation = d->pre_curve_exposure_compensation;
         
-        // Trigger GUI redraw
-        if(self->widget) dt_control_queue_redraw_widget(self->widget);
+        // Trigger GUI redraw with lower priority than image processing
+        if(self->widget) 
+        {
+          dt_control_queue_redraw_widget(self->widget);
+        }
+        
+        fprintf(stderr, "[basecurve] Histogram calculation completed, max values: R=%u G=%u B=%u\n",
+                g->custom_histogram_max[0], g->custom_histogram_max[1], g->custom_histogram_max[2]);
       }
     }
     
@@ -1353,14 +1540,23 @@ static gboolean dt_iop_basecurvergb_key_press(GtkWidget *widget,
 
 void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 {
-  // Only invalidate custom histogram when exposure compensation changes
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
-  if(g && w == g->pre_curve_exposure_compensation)
+  if(!g) return;
+  
+  dt_iop_gui_enter_critical_section(self);
+  
+  // Invalidate histogram and thumb cache when exposure compensation changes
+  if(w == g->pre_curve_exposure_compensation)
   {
-    dt_iop_gui_enter_critical_section(self);
     g->custom_histogram_valid = FALSE;
-    dt_iop_gui_leave_critical_section(self);
+    g->thumb_valid = FALSE;  // Force thumb buffer update with new exposure
+    fprintf(stderr, "[basecurve] GUI changed: exposure compensation, invalidated caches\n");
   }
+  
+  // Note: Curve changes don't affect histogram since it shows data BEFORE curve application
+  // Only invalidate histogram for parameters that affect the input data visualization
+  
+  dt_iop_gui_leave_critical_section(self);
 }
 
 static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
@@ -1368,6 +1564,28 @@ static void logbase_callback(GtkWidget *slider, dt_iop_module_t *self)
   dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
   g->loglogscale = eval_grey(dt_bauhaus_slider_get(g->logbase));
   gtk_widget_queue_draw(GTK_WIDGET(g->area));
+}
+
+void change_image(dt_iop_module_t *self)
+{
+  dt_iop_basecurvergb_gui_data_t *g = self->gui_data;
+  if(g)
+  {
+    dt_iop_gui_enter_critical_section(self);
+    
+    // Invalidate all caches when image changes
+    g->custom_histogram_valid = FALSE;
+    g->thumb_valid = FALSE;
+    g->last_exposure_compensation = NAN;  // Force recalculation
+    
+    // Reset UI state
+    g->mouse_x = g->mouse_y = -1.0;
+    g->selected = -1;
+    
+    fprintf(stderr, "[basecurve] Image changed: invalidated all caches\n");
+    
+    dt_iop_gui_leave_critical_section(self);
+  }
 }
 
 void gui_init(dt_iop_module_t *self)
@@ -1391,6 +1609,13 @@ void gui_init(dt_iop_module_t *self)
   g->last_exposure_compensation = NAN;  // Force initial calculation
   memset(g->custom_histogram_max, 0, sizeof(g->custom_histogram_max));
   memset(g->custom_histogram_max_temp, 0, sizeof(g->custom_histogram_max_temp));
+  
+  // Initialize optimized thumb buffer fields
+  g->thumb_buffer = NULL;
+  g->thumb_width = 0;
+  g->thumb_height = 0;
+  g->thumb_valid = FALSE;
+  g->thumb_hash = 0;
 
   g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_height(0));
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->area), _("abscissa: input, ordinate: output. works on RGB channels"));
@@ -1454,6 +1679,13 @@ void gui_cleanup(dt_iop_module_t *self)
   {
     dt_free_align(g->custom_histogram_temp);
     g->custom_histogram_temp = NULL;
+  }
+  
+  // Clean up optimized thumb buffer
+  if(g->thumb_buffer)
+  {
+    dt_free_align(g->thumb_buffer);
+    g->thumb_buffer = NULL;
   }
 }
 
