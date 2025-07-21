@@ -418,76 +418,6 @@ void tiling_callback(dt_iop_module_t *self,
 #endif
 
 /**
- * Optimized histogram calculation with OpenMP parallelization.
- * Uses reduction pattern following darktable vectorization conventions.
- */
-__DT_CLONE_TARGETS__
-static inline void calculate_custom_histogram_optimized(const float *const restrict in,
-                                                       const int width,
-                                                       const int height,
-                                                       const float exposure_compensation,
-                                                       uint32_t *const restrict histogram,
-                                                       uint32_t *const restrict histogram_max)
-{
-  // Initialize histogram (256 bins per RGB channel)
-  memset(histogram, 0, 3 * 256 * sizeof(uint32_t));
-  memset(histogram_max, 0, 3 * sizeof(uint32_t));
-  
-  const float exp_factor = exp2f(exposure_compensation);
-  const size_t num_pixels = (size_t)width * height;
-  
-  // Use temporary local histograms for reduction to avoid contention
-  #define HIST_SIZE 3 * 256
-  
-  // Calculate histogram for RGB channels after exposure compensation
-  // Values are clamped to [0,1] range to show clipping
-  // Use OpenMP reduction pattern for optimal performance
-  DT_OMP_FOR_SIMD(reduction(+:histogram[:HIST_SIZE]))
-  for(size_t i = 0; i < num_pixels; i++)
-  {
-    const float *const restrict pixel = in + i * 4;
-    
-    // Process RGB channels with efficient vectorizable loop
-    #ifdef _OPENMP
-    #pragma omp simd aligned(pixel:16)
-    #endif
-    for(int c = 0; c < 3; c++)  // RGB channels only
-    {
-      // Apply exposure compensation and clamp to [0,1] 
-      const float val = CLAMP(pixel[c] * exp_factor, 0.0f, 1.0f);
-      
-      // Convert to bin index with efficient float to int conversion
-      const int bin = (int)(val * 255.0f);
-      const int hist_idx = c * 256 + bin;
-      
-      histogram[hist_idx]++;
-    }
-  }
-  
-  // Calculate max values per channel for normalization
-  #ifdef _OPENMP
-  #pragma omp parallel for simd
-  #endif
-  for(int c = 0; c < 3; c++)
-  {
-    const int offset = c * 256;
-    uint32_t local_max = 0;
-    
-    #ifdef _OPENMP
-    #pragma omp simd reduction(max:local_max)
-    #endif
-    for(int bin = 0; bin < 256; bin++)
-    {
-      local_max = MAX(local_max, histogram[offset + bin]);
-    }
-    
-    histogram_max[c] = local_max;
-  }
-  
-  #undef HIST_SIZE
-}
-
-/**
  * Create or update thumbnail buffer for efficient histogram calculation.
  * Similar to toneequal's approach but adapted for RGB histogram after exposure.
  */
@@ -658,7 +588,7 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
     
     if(g->custom_histogram && g->custom_histogram_temp)
     {
-      // Strategy: Use thumb buffer for efficiency
+      // Use thumb buffer for efficiency
       if(thumb_invalid || exposure_changed)
       {
         // Update thumb buffer with current exposure compensation
@@ -671,7 +601,6 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
       // Calculate histogram
       if(g->thumb_valid)
       {
-        // Fast path: calculate from cached thumb buffer
         calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
         /* DEBUG
         fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
@@ -727,7 +656,6 @@ void process(dt_iop_module_t *self,
   const float factor_pre_curve_exposure_compensation = powf(2.0f, d->pre_curve_exposure_compensation);
   const float preserve_hue = d->preserve_hue;
   
-  // Update histogram for GUI preview when needed (separate function for better code organization)
   update_histogram_for_preview(self, piece, in, roi_in);
 
   // get matrix for working profile to XYZ_D65 conversion to prepare for the other conversions
