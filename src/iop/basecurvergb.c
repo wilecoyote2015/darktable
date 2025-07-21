@@ -821,16 +821,7 @@ void process(dt_iop_module_t *self,
     const float delta = max - min;
 
     const float L = (min + max) / 2.0f;
-    float C;
-
-    if(fabsf(max) > 1e-6f && fabsf(delta) > 1e-6f)
-    {
-      C = delta;
-    }
-    else
-    {
-      C = 0.0f;
-    }
+    const float C = (fabsf(max) > 1e-6f && fabsf(delta) > 1e-6f) ? delta : 0.0f;
     const float factor_resaturation = sqrtf(L * C) * d->preserve_highlight_saturation;
 
     dt_aligned_pixel_t HSV_out;
