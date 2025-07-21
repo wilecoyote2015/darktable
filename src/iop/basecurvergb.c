@@ -793,7 +793,7 @@ void process(dt_iop_module_t *self,
 
     dt_aligned_pixel_t jch_in;
     dt_aligned_pixel_t jch_out;
-    // dt_JzAzBz_2_JzCzhz is general JAB to JCH conversion and can be used
+    // dt_JzAzBz_2_JzCzhz is general JAB to JCH conversion and can be used with oklab
     dt_JzAzBz_2_JzCzhz(oklab_in, jch_in);
     dt_JzAzBz_2_JzCzhz(oklab_out, jch_out);
 
@@ -814,7 +814,8 @@ void process(dt_iop_module_t *self,
 
     // do saturation preservation:
     // first, construct a weight for saturation preservation that focuses on highlights 
-    // Chroma and Average rgb norm
+    // Chroma and minmax rgb norm.
+    // then, mix input and output saturation in HSV space with the weight.
     const float min = fminf(RGB_out[0], fminf(RGB_out[1], RGB_out[2]));
     const float max = fmaxf(RGB_out[0], fmaxf(RGB_out[1], RGB_out[2]));
     const float delta = max - min;
