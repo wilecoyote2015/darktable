@@ -846,16 +846,6 @@ void commit_params(dt_iop_module_t *self,
   dt_iop_basecurvergb_data_t *d = piece->data;
   dt_iop_basecurvergb_params_t *p = (dt_iop_basecurvergb_params_t *)p1;
 
-  // Enable histogram for preview pipeline (same as rgbcurve.c)
-  if(pipe->type & DT_DEV_PIXELPIPE_PREVIEW)
-  {
-    piece->request_histogram |= DT_REQUEST_ON;
-  }
-  else
-  {
-    piece->request_histogram &= ~DT_REQUEST_ON;
-  }
-
   d->preserve_hue = p->preserve_hue;
   d->preserve_highlight_saturation = p->preserve_highlight_saturation;
   d->pre_curve_exposure_compensation = p->pre_curve_exposure_compensation;
@@ -931,9 +921,6 @@ static float eval_grey(float x)
 void init(dt_iop_module_t *self)
 {
   dt_iop_default_init(self);
-  
-  // Request histogram for GUI display (same as rgbcurve.c)
-  self->request_histogram |= (DT_REQUEST_ON | DT_REQUEST_EXPANDED);
   
   dt_iop_basecurvergb_params_t *d = self->default_params;
   d->basecurve[0][1].x = d->basecurve[0][1].y = 1.0;
