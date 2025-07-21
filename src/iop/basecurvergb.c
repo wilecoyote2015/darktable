@@ -1190,15 +1190,8 @@ static gboolean dt_iop_basecurvergb_draw(GtkWidget *widget, cairo_t *crf, dt_iop
     }
     else if(use_log_sampling)
     {
-      // Interpolate from pre-calculated curve values for log sampling
-      const float curve_pos = xx * (DT_IOP_TONECURVE_RES - 1.0f);
-      const int idx = (int)curve_pos;
-      const float frac = curve_pos - idx;
-      
-      if(idx >= DT_IOP_TONECURVE_RES - 1)
-        yy = g->draw_ys[DT_IOP_TONECURVE_RES - 1];
-      else
-        yy = g->draw_ys[idx] * (1.0f - frac) + g->draw_ys[idx + 1] * frac;
+      // Directly evaluate the curve at position xx for smooth log sampling
+      yy = dt_draw_curve_calc_value(minmax_curve, xx);
     }
     else
     {
