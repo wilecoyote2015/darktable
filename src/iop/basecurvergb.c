@@ -560,7 +560,10 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
   
   dt_iop_gui_enter_critical_section(self);
   
-  // Check if recalculation is needed with debug output
+  // Check if recalculation is needed.
+  // histogram refers to the exposure compensated image
+  // and scales with logscale. everything afterwards (like curve application)
+  // does not affect the histogram.
   const gboolean exposure_changed = (isnan(g->last_exposure_compensation) || 
                                     fabsf(g->last_exposure_compensation - d->pre_curve_exposure_compensation) > 1e-6f);
   const gboolean logscale_changed = (isnan(g->last_loglogscale) ||
