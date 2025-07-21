@@ -658,12 +658,8 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
     
     if(g->custom_histogram && g->custom_histogram_temp)
     {
-      // Strategy: Use thumb buffer for efficiency, but fall back to direct calculation
-      // if thumb is not available or image size is small enough
-      const size_t num_pixels = (size_t)wd * ht;
-      const gboolean use_thumb = (num_pixels > 400000); // Use thumb for images > ~400k pixels
-      
-      if(use_thumb && (thumb_invalid || exposure_changed))
+      // Strategy: Use thumb buffer for efficiency
+      if(thumb_invalid || exposure_changed)
       {
         // Update thumb buffer with current exposure compensation
         update_thumb_buffer(self, in, wd, ht, d->pre_curve_exposure_compensation);
@@ -672,22 +668,13 @@ static inline void update_histogram_for_preview(dt_iop_module_t *const self,
         */
       }
       
-      // Calculate histogram using the most appropriate method
-      if(use_thumb && g->thumb_valid)
+      // Calculate histogram
+      if(g->thumb_valid)
       {
         // Fast path: calculate from cached thumb buffer
         calculate_histogram_from_thumb(g, g->custom_histogram_temp, g->custom_histogram_max_temp);
         /* DEBUG
         fprintf(stderr, "[basecurve] Used thumb buffer for histogram (fast path)\n");
-        */
-      }
-      else
-      {
-        // Direct calculation for small images or when thumb is unavailable
-        calculate_custom_histogram_optimized(in, wd, ht, d->pre_curve_exposure_compensation,
-                                           g->custom_histogram_temp, g->custom_histogram_max_temp);
-        /* DEBUG
-        fprintf(stderr, "[basecurve] Used direct calculation for histogram\n");
         */
       }
       
