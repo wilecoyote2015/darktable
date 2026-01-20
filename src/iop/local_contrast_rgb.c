@@ -170,6 +170,9 @@ typedef struct dt_iop_local_contrast_rgb_gui_data_t
   GtkWidget *feathering[N_SCALES];
   GtkWidget *show_mask[N_SCALES];
 
+  // Collapsible sections for scales 2 and 3
+  dt_gui_collapsible_section_t scale_section[N_SCALES - 1];  // only need 2 collapsible sections
+
   // Shared GTK widgets
   GtkWidget *details;
   GtkWidget *iterations;
@@ -1084,17 +1087,41 @@ static void create_scale_section(dt_iop_module_t *self,
                                  dt_iop_local_contrast_rgb_gui_data_t *g,
                                  const int scale_idx)
 {
-  // Section label
+  dt_iop_module_t *section = NULL;
+  
+  // Section label and container setup
   char section_name[64];
   snprintf(section_name, sizeof(section_name), _("detail scale %d"), scale_idx + 1);
 
-  gtk_widget_set_margin_top(dt_ui_section_label_new(section_name), DT_PIXEL_APPLY_DPI(10));
-  dt_gui_box_add(self->widget, dt_ui_section_label_new(section_name));
+  if(scale_idx == 0)
+  {
+    // First scale: always visible, not collapsible
+    gtk_widget_set_margin_top(dt_ui_section_label_new(section_name), DT_PIXEL_APPLY_DPI(10));
+    dt_gui_box_add(self->widget, dt_ui_section_label_new(section_name));
+    section = self;
+  }
+  else
+  {
+    // Scales 2 and 3: collapsible sections
+    char config_key[128];
+    snprintf(config_key, sizeof(config_key), "plugins/darkroom/local_contrast_rgb/expand_scale_%d", scale_idx + 1);
+    
+    GtkWidget *section_box = dt_gui_vbox();
+    dt_gui_box_add(self->widget, section_box);
+    
+    dt_gui_new_collapsible_section(&g->scale_section[scale_idx - 1],
+                                   config_key,
+                                   section_name,
+                                   GTK_BOX(section_box),
+                                   DT_ACTION(self));
+    
+    section = DT_IOP_SECTION_FOR_PARAMS(self, NULL, GTK_WIDGET(g->scale_section[scale_idx - 1].container));
+  }
 
   // Detail boost slider
   char param_name[64];
   snprintf(param_name, sizeof(param_name), "detail_scale[%d]", scale_idx);
-  g->detail_scale[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
+  g->detail_scale[scale_idx] = dt_bauhaus_slider_from_params(section, param_name);
   dt_bauhaus_slider_set_soft_range(g->detail_scale[scale_idx], 0.25, 3.0);
   dt_bauhaus_slider_set_digits(g->detail_scale[scale_idx], 2);
   dt_bauhaus_widget_set_label(g->detail_scale[scale_idx], NULL, _("detail boost"));
@@ -1107,7 +1134,7 @@ static void create_scale_section(dt_iop_module_t *self,
 
   // Feature scale slider
   snprintf(param_name, sizeof(param_name), "blending[%d]", scale_idx);
-  g->blending[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
+  g->blending[scale_idx] = dt_bauhaus_slider_from_params(section, param_name);
   dt_bauhaus_slider_set_soft_range(g->blending[scale_idx], 0.1, 100.0);
   dt_bauhaus_slider_set_format(g->blending[scale_idx], "%");
   dt_bauhaus_widget_set_label(g->blending[scale_idx], NULL, _("feature scale"));
@@ -1119,7 +1146,7 @@ static void create_scale_section(dt_iop_module_t *self,
 
   // Edge refinement slider
   snprintf(param_name, sizeof(param_name), "feathering[%d]", scale_idx);
-  g->feathering[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
+  g->feathering[scale_idx] = dt_bauhaus_slider_from_params(section, param_name);
   dt_bauhaus_slider_set_soft_range(g->feathering[scale_idx], 0.1, 50.0);
   dt_bauhaus_widget_set_label(g->feathering[scale_idx], NULL, _("edges refinement"));
   gtk_widget_set_tooltip_text
@@ -1140,9 +1167,8 @@ static void create_scale_section(dt_iop_module_t *self,
 
   GtkWidget *hbox = dt_gui_hbox(dt_gui_expand(dt_ui_label_new(_("display detail mask"))),
                                 g->show_mask[scale_idx]);
-  dt_gui_box_add(self->widget, hbox);
-}
-
+  dt_gui_box_add(section->widget, hbox);
+} 
 
 void gui_init(dt_iop_module_t *self)
 {
