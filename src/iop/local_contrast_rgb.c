@@ -869,10 +869,10 @@ void commit_params(dt_iop_module_t *self,
   // Copy per-scale params and compute derived values
   for(int s = 0; s < N_SCALES; s++)
   {
-    // TODO: UI parameter shall be given in percentage of detail strength, where 100% means no change 
+    // UI parameter is given in percentage of detail strength, where 100% means no change 
     // and 0% means that detail is removed (multiplier 0). Internal math is a multiplier of relative detail EV
-    // so that 1 means no change, 2 means double the detail, 0.5 means half the detail, 
-    d->scales[s].detail_boost = p->detail_boost[s];
+    // so that 100% means no change, 200% means double the detail, 50% means half the detail, 
+    d->scales[s].detail_boost = p->detail_boost[s] / 100.0f;
 
     // UI feature_scale param is the square root of the actual feature_scale parameter
     // to make it more sensitive to small values that represent the most important value domain.
@@ -1100,15 +1100,16 @@ static void create_scale_section(dt_iop_module_t *self,
   char param_name[64];
   snprintf(param_name, sizeof(param_name), "detail_boost[%d]", scale_idx);
   g->detail_boost[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
-  dt_bauhaus_slider_set_soft_range(g->detail_boost[scale_idx], 0.25, 3.0);
+  dt_bauhaus_slider_set_soft_range(g->detail_boost[scale_idx], 0.0, 300.0);
+  dt_bauhaus_slider_set_format(g->detail_boost[scale_idx], "%");
   dt_bauhaus_slider_set_digits(g->detail_boost[scale_idx], 2);
-  dt_bauhaus_widget_set_label(g->detail_boost[scale_idx], NULL, _("detail boost"));
+  dt_bauhaus_widget_set_label(g->detail_boost[scale_idx], NULL, _("detail strength"));
   gtk_widget_set_tooltip_text
     (g->detail_boost[scale_idx],
-     _("amount of local contrast enhancement for this scale\n"
-       "1.0 = no change (scale inactive)\n"
-       "> 1.0 = boost local contrast\n"
-       "< 1.0 = reduce local contrast"));
+     _("amount of local contrast for this scale\n"
+       "100% = no change\n"
+       "> 100% = increase local contrast\n"
+       "< 100% = decrease local contrast"));
 
   // Feature scale slider
   snprintf(param_name, sizeof(param_name), "feature_scale[%d]", scale_idx);
