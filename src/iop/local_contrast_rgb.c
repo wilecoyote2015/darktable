@@ -843,13 +843,18 @@ void reload_defaults(dt_iop_module_t *self)
 {
   dt_iop_local_contrast_rgb_params_t *d = self->default_params;
 
-  // TODO: set feature_scale (feature scale) to 4 for 2. scale and 25 for 3. scale
+  // Set 12% scale to have a visible effect by default
+  // because this resembles a clarity-like effect
+  // Other scales remain at 100% (no effect)
+  for(int s = 0; s < N_SCALES; s++)
+    if(s != 1)
+      d->detail_boost[s] = 100.0f;
+    else
+      d->detail_boost[s] = 150.0f;
 
-  // Set first scale to have a visible effect by default
-  // Other scales remain at 1.0 (no effect)
-  d->detail_boost[0] = 1.5f;
-  for(int s = 1; s < N_SCALES; s++)
-    d->detail_boost[s] = 1.0f;
+  d->feature_scale[0] = 4.0f;
+  d->feature_scale[1] = 12.0f;
+  d->feature_scale[2] = 25.0f;
 }
 
 
