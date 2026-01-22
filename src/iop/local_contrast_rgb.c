@@ -71,7 +71,7 @@
 #endif
 
 
-DT_MODULE_INTROSPECTION(2, dt_iop_local_contrast_rgb_params_t)
+DT_MODULE_INTROSPECTION(1, dt_iop_local_contrast_rgb_params_t)
 
 
 /** Number of independent detail scales */
@@ -213,64 +213,6 @@ dt_iop_colorspace_type_t default_colorspace(dt_iop_module_t *self,
 {
   return IOP_CS_RGB;
 }
-
-
-int legacy_params(dt_iop_module_t *self,
-                  const void *const old_params,
-                  const int old_version,
-                  void **new_params,
-                  int32_t *new_params_size,
-                  int *new_version)
-{
-  if(old_version == 1)
-  {
-    // Version 1 had single-scale parameters
-    typedef struct dt_iop_local_contrast_rgb_params_v1_t
-    {
-      float detail_boost;
-      float feature_scale;
-      float feathering;
-      dt_iop_local_contrast_rgb_filter_t details;
-      dt_iop_luminance_mask_method_t method;
-      int iterations;
-    } dt_iop_local_contrast_rgb_params_v1_t;
-
-    const dt_iop_local_contrast_rgb_params_v1_t *o =
-      (dt_iop_local_contrast_rgb_params_v1_t *)old_params;
-
-    // Allocate new params
-    dt_iop_local_contrast_rgb_params_t *n =
-      (dt_iop_local_contrast_rgb_params_t *)calloc(1, sizeof(dt_iop_local_contrast_rgb_params_t));
-    if(!n) return 1;
-
-    // Initialize with defaults
-    for(int s = 0; s < N_SCALES; s++)
-    {
-      n->detail_boost[s] = 1.0f;  // no effect
-      n->feature_scale[s] = 12.0f;
-      n->feathering[s] = 5.0f;
-    }
-
-    // Copy first scale from v1 params
-    n->detail_boost[0] = o->detail_boost;
-    n->feature_scale[0] = o->feature_scale;
-    n->feathering[0] = o->feathering;
-
-    // Copy shared params
-    n->details = o->details;
-    n->method = o->method;
-    n->iterations = o->iterations;
-
-    *new_params = n;
-    *new_params_size = sizeof(dt_iop_local_contrast_rgb_params_t);
-    *new_version = 2;
-
-    return 0;
-  }
-
-  return 1;
-}
-
 
 /**
  * Helper functions
