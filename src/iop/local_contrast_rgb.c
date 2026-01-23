@@ -98,9 +98,9 @@ typedef enum dt_iop_local_contrast_rgb_filter_t
 typedef struct dt_iop_local_contrast_rgb_params_t
 {
   // Per-scale parameters
-  float detail_boost[N_SCALES];   // $MIN: 0.0 $MAX: 500.0 $DEFAULT: 100.0 $DESCRIPTION: "detail boost"
+  float detail_boost[N_SCALES];   // $MIN: 0.0 $MAX: 1000.0 $DEFAULT: 100.0 $DESCRIPTION: "detail boost"
   float feature_scale[N_SCALES];       // $MIN: 0.01 $MAX: 100.0 $DEFAULT: 12.0 $DESCRIPTION: "feature scale"
-  float feathering[N_SCALES];     // $MIN: 0.01 $MAX: 10000.0 $DEFAULT: 5.0 $DESCRIPTION: "edges refinement"
+  float feathering[N_SCALES];     // $MIN: 0.01 $MAX: 10000.0 $DEFAULT: 100.0 $DESCRIPTION: "edges refinement"
 
   // Shared parameters
   dt_iop_local_contrast_rgb_filter_t details; // $DEFAULT: DT_LC_EIGF $DESCRIPTION: "feature extractor"
@@ -1047,7 +1047,7 @@ static void create_scale_section(dt_iop_module_t *self,
   char param_name[64];
   snprintf(param_name, sizeof(param_name), "detail_boost[%d]", scale_idx);
   g->detail_boost[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
-  dt_bauhaus_slider_set_soft_range(g->detail_boost[scale_idx], 0.0, 300.0);
+  dt_bauhaus_slider_set_soft_range(g->detail_boost[scale_idx], 0.0, 500.0);
   dt_bauhaus_slider_set_format(g->detail_boost[scale_idx], "%");
   dt_bauhaus_slider_set_digits(g->detail_boost[scale_idx], 2);
   dt_bauhaus_widget_set_label(g->detail_boost[scale_idx], NULL, _("detail strength"));
@@ -1073,7 +1073,7 @@ static void create_scale_section(dt_iop_module_t *self,
   // Edge refinement slider
   snprintf(param_name, sizeof(param_name), "feathering[%d]", scale_idx);
   g->feathering[scale_idx] = dt_bauhaus_slider_from_params(self, param_name);
-  dt_bauhaus_slider_set_soft_range(g->feathering[scale_idx], 0.1, 50.0);
+  dt_bauhaus_slider_set_soft_range(g->feathering[scale_idx], 0.1, 100.0);
   dt_bauhaus_widget_set_label(g->feathering[scale_idx], NULL, _("edges refinement"));
   gtk_widget_set_tooltip_text
     (g->feathering[scale_idx],
