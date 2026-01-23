@@ -88,9 +88,7 @@ DT_MODULE_INTROSPECTION(1, dt_iop_local_contrast_rgb_params_t)
  **/
 typedef enum dt_iop_local_contrast_rgb_filter_t
 {
-  DT_LC_AVG_GUIDED = 0, // $DESCRIPTION: "averaged guided filter"
   DT_LC_GUIDED,         // $DESCRIPTION: "guided filter"
-  DT_LC_AVG_EIGF,       // $DESCRIPTION: "averaged EIGF"
   DT_LC_EIGF            // $DESCRIPTION: "EIGF"
 } dt_iop_local_contrast_rgb_filter_t;
 
@@ -298,30 +296,12 @@ static inline void compute_smoothed_luminance_for_scale(
   // Then apply the smoothing filter
   switch(details)
   {
-    case(DT_LC_AVG_GUIDED):
-    {
-      fast_surface_blur(luminance, width, height,
-                        scale_data->radius, scale_data->feathering, iterations,
-                        DT_GF_BLENDING_GEOMEAN, 1.0f, 0.0f,
-                        exp2f(-14.0f), 4.0f);
-      break;
-    }
-
     case(DT_LC_GUIDED):
     {
       fast_surface_blur(luminance, width, height,
                         scale_data->radius, scale_data->feathering, iterations,
                         DT_GF_BLENDING_LINEAR, 1.0f, 0.0f,
                         exp2f(-14.0f), 4.0f);
-      break;
-    }
-
-    case(DT_LC_AVG_EIGF):
-    {
-      fast_eigf_surface_blur(luminance, width, height,
-                             scale_data->radius, scale_data->feathering, iterations,
-                             DT_GF_BLENDING_GEOMEAN, 1.0f,
-                             0.0f, exp2f(-14.0f), 4.0f);
       break;
     }
 
