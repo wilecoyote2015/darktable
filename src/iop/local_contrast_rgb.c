@@ -781,6 +781,37 @@ void cleanup_global(dt_iop_module_so_t *self)
 }
 
 
+void init_presets(dt_iop_module_so_t *self)
+{
+  dt_iop_local_contrast_rgb_params_t p;
+  memset(&p, 0, sizeof(p));
+  p.details = DT_LC_EIGF;
+  p.method = DT_TONEEQ_NORM_2;
+  p.iterations = 1;
+
+  p.detail_boost[0] = 100.0f;
+  p.detail_boost[1] = 250.0f;
+  p.detail_boost[2] = 100.0f;
+  p.feature_scale[0] = 4.0f;
+  p.feature_scale[1] = 12.0f;
+  p.feature_scale[2] = 25.0f;
+  p.feathering[0] = 100.0f;
+  p.feathering[1] = 100.0f;
+  p.feathering[2] = 100.0f;
+
+  dt_gui_presets_add_generic
+    (_("clarity - fine textures"), self->op,
+     self->version(), &p, sizeof(p), TRUE, DEVELOP_BLEND_CS_RGB_SCENE);
+
+  p.detail_boost[1] = 100.0f;
+  p.detail_boost[2] = 300.0f;
+  p.feathering[2] = 50.0f;
+
+    dt_gui_presets_add_generic
+    (_("clarity - large scale"), self->op,
+     self->version(), &p, sizeof(p), TRUE, DEVELOP_BLEND_CS_RGB_SCENE);
+}
+
 void reload_defaults(dt_iop_module_t *self)
 {
   dt_iop_local_contrast_rgb_params_t *d = self->default_params;
